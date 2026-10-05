@@ -415,7 +415,9 @@ configure_firewall(){
     ok "firewalld rules applied."
   else
     warn "No active UFW/firewalld. KavoshRust will not enable a firewall."
-    warn "Open the printed RustDesk ports in any provider-side firewall if one exists."
+    warn "IMPORTANT: native WebSocket listeners also bind on ID+2 and Relay+2."
+    warn "If your provider firewall is allow-all, explicitly block those WebSocket ports unless you need the web client."
+    warn "For desktop clients, allow only NAT TCP, ID TCP/UDP and Relay TCP."
   fi
 }
 
@@ -712,9 +714,9 @@ show_server_info(){
   printf 'Public Key:             %s\n' "$key"
   printf 'NAT test TCP:           %s\n' "$((ID_PORT-1))"
   printf 'ID TCP/UDP:             %s\n' "$ID_PORT"
-  printf 'ID WebSocket TCP:       %s (listener active; firewall default closed)\n' "$((ID_PORT+2))"
+  printf 'ID WebSocket TCP:       %s (listener active; do not expose directly unless needed)\n' "$((ID_PORT+2))"
   printf 'Relay TCP:              %s\n' "$RELAY_PORT"
-  printf 'Relay WebSocket TCP:    %s (listener active; firewall default closed)\n' "$((RELAY_PORT+2))"
+  printf 'Relay WebSocket TCP:    %s (listener active; do not expose directly unless needed)\n' "$((RELAY_PORT+2))"
   printf 'WebSocket firewall:     %s\n' "${WEB_PORTS_ENABLED:-0}"
   printf 'Force relay:            %s\n' "${ALWAYS_USE_RELAY:-N}"
   printf 'Automatic HTTPS:        %s (%s)\n' "${SSL_ENABLED:-0}" "${SSL_MODE:-none}"
@@ -836,7 +838,14 @@ toggle_web_ports(){
       firewall-cmd --permanent --remove-port="$relws/tcp" >/dev/null 2>&1 || true
       firewall-cmd --reload >/dev/null 2>&1 || true
     fi
-    ok "WebSocket firewall ports closed. Native listeners remain local/host-bound as required by upstream."
+    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
+      ok "WebSocket allow-rules removed from UFW."
+    elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+      ok "WebSocket allow-rules removed from firewalld."
+    else
+      warn "No active host firewall exists, so KavoshRust cannot locally close these listeners."
+      warn "Block $idws/TCP and $relws/TCP in the provider/network firewall."
+    fi
   else
     sed -i 's/^WEB_PORTS_ENABLED=.*/WEB_PORTS_ENABLED=1/' "$ENV_FILE"
     configure_firewall
