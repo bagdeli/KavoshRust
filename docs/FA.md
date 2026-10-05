@@ -1,76 +1,86 @@
 # راهنمای فارسی KavoshRust
 
-KavoshRust برای نصب و نگهداری RustDesk Server OSS روی Debian/Ubuntu طراحی شده است؛ مخصوصاً برای سروری که سرویس‌های دیگری هم روی آن فعال هستند و نباید با نصب RustDesk مختل شوند.
+KavoshRust برای نصب RustDesk Server OSS روی سرورهای Debian/Ubuntu طراحی شده است؛ به‌خصوص سروری که سرویس‌های دیگری روی آن فعال هستند.
 
-## نصب سریع
+در سرور فعلی Kavosh، معماری نصب این است:
 
-ابتدا فقط وضعیت سرور را بدون اعمال تغییر بررسی کنید:
+```text
+RustDesk OSS Native Binary
+        +
+systemd
+        +
+Nginx موجود سرور
+        +
+Certbot
+```
+
+Docker نصب نمی‌شود.
+
+## نصب
+
+ابتدا Preflight:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/bagdeli/KavoshRust/main/install.sh) --preflight
 ```
 
-سپس Installer را اجرا کنید:
+سپس:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/bagdeli/KavoshRust/main/install.sh)
 ```
 
-گزینه زیر را انتخاب کنید:
+و گزینه 1.
 
-```text
-1) Install / Repair RustDesk OSS
-```
-
-اسکریپت دامنه، ID Port و Relay Port را می‌پرسد. پورت‌های پیش‌فرض RustDesk پذیرفته نمی‌شوند. کل بازه پورت قابل انتخاب است؛ پورت‌های پایین‌تر از 1024 نیز قابل انتخاب‌اند ولی به‌عنوان پورت‌های حساس/معروف هشدار می‌گیرند.
-
-پس از نصب، منو با این فرمان در دسترس است:
-
-```bash
-kavoshrust
-```
-
-## انتخاب پورت
-
-RustDesk بعضی پورت‌ها را از پورت اصلی محاسبه می‌کند. اگر ID Port را `P` و Relay Port را `R` انتخاب کنید:
-
-```text
-P-1/TCP  NAT test
-P/TCP    ID / rendezvous
-P/UDP    registration / heartbeat
-P+2/TCP  hbbs WebSocket (اختیاری)
-
-R/TCP    Relay
-R+2/TCP  hbbr WebSocket (اختیاری)
-```
-
-بنابراین ID Port و Relay Port آزادانه انتخاب می‌شوند، ولی پورت‌های وابسته باید مطابق رفتار خود RustDesk باشند. به دلیل `P-1` و `P+2`، مقدار ID Port باید بین `2..65533` باشد و Relay Port بین `1..65533`. Installer همه پورت‌هایی را که قرار است روی Host منتشر شوند بررسی می‌کند و در صورت اشغال بودن، نصب را روی آن پورت انجام نمی‌دهد.
-
-WebSocketها به‌صورت پیش‌فرض منتشر نمی‌شوند.
-
-## دامنه و SSL
-
-برای نمونه:
+دامنه پیشنهادی پروژه:
 
 ```text
 rust.kavosh.info
 ```
 
-باید A Record به IP عمومی سرور اشاره کند.
+## پورت‌ها
 
-اگر 80/443 آزاد باشند، Caddy به‌صورت خودکار HTTPS و تمدید گواهی را مدیریت می‌کند. اگر این پورت‌ها توسط سرویس دیگری اشغال باشند، KavoshRust آن سرویس را متوقف نمی‌کند و RustDesk بدون Caddy نصب می‌شود.
+اگر ID Port برابر P و Relay Port برابر R باشد:
 
-HTTPS مربوط به Health/Landing endpoint است؛ ترافیک Native خود RustDesk روی پورت‌های انتخابی اجرا می‌شود.
+```text
+P-1/TCP
+P/TCP
+P/UDP
+P+2/TCP
+R/TCP
+R+2/TCP
+```
 
-## دریافت مشخصات کلاینت
+در حالت native همه این Listenerها روی Host ایجاد می‌شوند، بنابراین Installer قبل از نصب آزاد بودن همه آنها را بررسی می‌کند.
+
+برای کلاینت دسکتاپ فقط این چهار Rule را در فایروال اینترنتی باز کنید:
+
+```text
+P-1/TCP
+P/TCP
+P/UDP
+R/TCP
+```
+
+پورت‌های P+2 و R+2 مربوط به WebSocket هستند. اگر Web Client ندارید آنها را در فایروال Provider بسته نگه دارید.
+
+## SSL
+
+چون روی سرور فعلی Nginx روی 80/443 فعال است، KavoshRust Caddy یا Web Server دیگری اجرا نمی‌کند.
+
+برای دامنه RustDesk یک vhost جدا می‌سازد، قبل از Reload دستور `nginx -t` را اجرا می‌کند و سپس با Certbot گواهی می‌گیرد.
+
+اگر DNS درست نباشد یا Nginx validation خطا بدهد، RustDesk می‌تواند کار کند ولی SSL فعال نمی‌شود.
+
+## مشخصات کلاینت
 
 بعد از نصب:
 
 ```bash
-kavoshrust
+kavoshrust --info
 ```
 
-سپس گزینه 3 را انتخاب کنید. خروجی شامل این موارد است:
+خروجی شامل:
 
 ```text
 ID Server
@@ -78,44 +88,39 @@ Relay Server
 Public Key
 ```
 
-در هر دو Client تکنسین و مشتری، همین مقادیر را در:
+است.
+
+هم Client تکنسین و هم Client مشتری باید همین مقادیر را داشته باشند. API Server در نسخه OSS خالی می‌ماند.
+
+## مدل پشتیبانی مشتری
+
+برای سناریوی Support:
 
 ```text
-Settings -> Network -> Unlock Network Settings
+مشتری RustDesk را اجرا می‌کند
+→ ID را اعلام می‌کند
+→ تکنسین ID را وارد می‌کند
+→ مشتری درخواست را Accept یا Reject می‌کند
 ```
 
-وارد کنید.
+برای این مدل، حالت تأیید دستی مشتری مناسب است.
 
-برای پشتیبانی موردی بهتر است سمت مشتری تأیید دستی فعال باشد:
-
-```text
-approve-mode=click
-```
-
-در این حالت مشتری ID را اعلام می‌کند، تکنسین درخواست اتصال می‌دهد و مشتری با Accept اجازه می‌دهد.
-
-## سرور Router / VPN
-
-اگر `net.ipv4.ip_forward=1` باشد و Docker از قبل نصب نباشد، Installer قبل از نصب Docker مسیرها و Policy Ruleها را نشان می‌دهد و بدون تأیید صریح ادامه نمی‌دهد. دلیل این رفتار این است که Docker ممکن است روی iptables/FORWARD تغییر ایجاد کند. اگر در این مرحله Cancel کنید، Docker و RustDesk نصب نمی‌شوند.
-
-## امنیت روی سرور مشترک
-
-Installer:
-
-- SSH را تغییر نمی‌دهد.
-- سرویس دیگری را برای آزادکردن پورت Stop/Kill نمی‌کند.
-- UFW/firewalld را در صورت غیرفعال بودن خودکار فعال نمی‌کند.
-- اگر 80/443 اشغال باشند، سرویس فعلی را جایگزین نمی‌کند.
-- private key را در GitHub قرار نمی‌دهد.
-- پورت‌های WebSocket را مگر با درخواست صریح منتشر نمی‌کند.
-
-## دستورات مفید
+## نگهداری
 
 ```bash
-kavoshrust --preflight
+kavoshrust
 kavoshrust --status
 kavoshrust --info
 kavoshrust --diagnostics
 ```
 
-برای جزئیات بیشتر فایل‌های `CLIENT.md`، `SERVER.md`، `SECURITY.md`، `MAINTENANCE.md` و `TROUBLESHOOTING.md` را ببینید.
+منو شامل Backup، Restore، Update، تغییر پورت، تغییر دامنه، SSL، Firewall، Logs، Force Relay و Uninstall است.
+
+## امنیت
+
+- SSH تغییر داده نمی‌شود.
+- Docker نصب نمی‌شود.
+- Nginx موجود جایگزین نمی‌شود.
+- سرویس دیگر برای آزادکردن پورت Stop نمی‌شود.
+- private key در GitHub قرار نمی‌گیرد.
+- Backup شامل private key است و باید محرمانه نگهداری شود.
