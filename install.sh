@@ -56,7 +56,7 @@ load_env(){
 
 validate_port_number(){
   local p=$1
-  [[ "$p" =~ ^[0-9]+$ ]] && (( p >= 1024 && p <= 65533 ))
+  [[ "$p" =~ ^[0-9]+$ ]] && (( p >= 1 && p <= 65535 ))
 }
 
 validate_host(){
@@ -73,8 +73,12 @@ port_in_use(){
 }
 
 is_common_port(){
-  case "$1" in
-    20|21|22|23|25|53|67|68|69|80|110|123|143|161|389|443|445|465|514|587|631|993|995|1433|1521|2049|2375|2376|3000|3306|3389|5432|5672|5900|6379|6443|8080|8443|9000|9090|9200|9300|27017) return 0;;
+  local p=$1
+  if [[ "$p" =~ ^[0-9]+$ ]] && (( p < 1024 )); then
+    return 0
+  fi
+  case "$p" in
+    1433|1521|2049|2375|2376|3000|3306|3389|5432|5672|5900|6379|6443|8080|8443|9000|9090|9200|9300|27017) return 0;;
     *) return 1;;
   esac
 }
@@ -102,9 +106,12 @@ validate_layout(){
   idws=$((id+2))
   relws=$((relay+2))
 
-  validate_port_number "$id" || { fail "ID port must be between 1024 and 65533."; return 1; }
-  validate_port_number "$relay" || { fail "Relay port must be between 1024 and 65533."; return 1; }
-  (( nat >= 1024 && idws <= 65535 && relws <= 65535 )) || { fail "Derived ports are outside the valid range."; return 1; }
+  validate_port_number "$id" || { fail "ID port must be between 1 and 65535."; return 1; }
+  validate_port_number "$relay" || { fail "Relay port must be between 1 and 65535."; return 1; }
+  (( nat >= 1 && idws <= 65535 && relws <= 65535 )) || {
+    fail "Derived port constraint failed: ID must be 2-65533 and Relay must be 1-65533."
+    return 1
+  }
 
   local ports=("$nat" "$id" "$relay")
   if [[ "$web" == 1 ]]; then
@@ -146,6 +153,24 @@ find_suggested_ports(){
 show_listeners(){
   echo -e "${CYAN}Current listening ports (first 80):${NC}"
   ss -tulpen 2>/dev/null | head -n 81 || true
+}
+
+routing_risk_report(){
+  local forwarding="unknown"
+  forwarding=$(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo unknown)
+  echo -e "${CYAN}Routing / Docker safety:${NC}"
+  echo "IPv4 forwarding: $forwarding"
+  command -v ip >/dev/null 2>&1 && {
+    echo "Routes:"
+    ip route show 2>/dev/null | head -n 40 || true
+    echo "Policy rules:"
+    ip rule show 2>/dev/null | head -n 40 || true
+  }
+  if [[ "$forwarding" == 1 ]] && ! command -v docker >/dev/null 2>&1; then
+    warn "IPv4 forwarding is enabled and Docker is not installed. Installing Docker may change iptables/FORWARD behavior on routing/VPN hosts."
+    return 2
+  fi
+  return 0
 }
 
 check_os(){
@@ -458,6 +483,19 @@ install_server(){
     3) ssl=1; warn "DNS does not yet point here. Caddy will retry certificate issuance automatically after DNS is corrected.";;
   esac
 
+  if ! command -v docker >/dev/null 2>&1; then
+    set +e
+    routing_risk_report
+    rc=$?
+    set -e
+    if [[ "$rc" == 2 ]]; then
+      confirm "Proceed with Docker installation after this routing warning?" N || {
+        warn "Installation cancelled before Docker or RustDesk changed the host."
+        return
+      }
+    fi
+  fi
+
   install_docker
   mkdir -p "$INSTALL_DIR" "$DATA_DIR" "$BACKUP_DIR"
   chmod 700 "$INSTALL_DIR" "$DATA_DIR" "$BACKUP_DIR"
@@ -719,6 +757,8 @@ preflight_report(){
   echo "Docker: $(docker --version 2>/dev/null || echo not-installed)"
   echo "Docker Compose: $(docker compose version 2>/dev/null || echo not-installed)"
   echo "Public IPv4: $(get_public_ip)"
+  echo
+  routing_risk_report || true
   echo
   if command -v ss >/dev/null 2>&1; then
     scan_ports
