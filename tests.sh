@@ -37,11 +37,17 @@ if validate_port_number 70000; then echo "FAIL: >65535 rejected"; fail_count=$((
 port_in_use() { return 1; }
 current_rustdesk_ports() { return 1; }
 
-check "valid independent ID/relay layout" validate_layout 32116 33117 install
-if validate_layout 32116 32118 install >/dev/null 2>&1; then
-  echo "FAIL: overlap should be rejected"; fail_count=$((fail_count+1))
+check "valid independent ID/relay layout" validate_layout 32116 33117 install 0
+check "host port may reuse disabled WebSocket-derived port" validate_layout 32116 32118 install 0
+if validate_layout 32116 32115 install 0 >/dev/null 2>&1; then
+  echo "FAIL: core overlap should be rejected"; fail_count=$((fail_count+1))
 else
-  echo "PASS: overlap rejected"; pass=$((pass+1))
+  echo "PASS: core overlap rejected"; pass=$((pass+1))
+fi
+if validate_layout 32116 32118 install 1 >/dev/null 2>&1; then
+  echo "FAIL: WebSocket overlap should be rejected when enabled"; fail_count=$((fail_count+1))
+else
+  echo "PASS: WebSocket overlap rejected when enabled"; pass=$((pass+1))
 fi
 
 mkdir -p "$KAVOSHRUST_INSTALL_DIR/data"
