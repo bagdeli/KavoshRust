@@ -24,14 +24,22 @@ Before installing anything:
 bash <(curl -fsSL https://raw.githubusercontent.com/bagdeli/KavoshRust/main/install.sh) --preflight
 ```
 
-This does not install or change services. Review:
+This does not install or change services. On the current shared/routing host, do not proceed to installation until this report has been reviewed. Review:
 
 - existing TCP/UDP listeners and owning processes,
 - whether Docker and Docker Compose already exist,
 - whether TCP/UDP 80 and 443 are occupied,
-- CPU, memory and root filesystem capacity.
+- CPU, memory and root filesystem capacity,
+- IPv4 forwarding, routes and policy-routing rules,
+- whether Docker is already installed.
 
-## 3. Installation
+## 3. Routing/Docker safety
+
+If IPv4 forwarding is already enabled and Docker is not installed, KavoshRust displays the current routes and policy rules and requires an explicit confirmation before installing Docker. Docker can add iptables/FORWARD rules, which matters on hosts acting as routers, VPN gateways or policy-routing nodes. Cancelling at this prompt leaves RustDesk and Docker uninstalled.
+
+If Docker is already part of the host's production design, the installer reuses it and does not reinstall the engine.
+
+## 4. Installation
 
 Start the interactive manager:
 
@@ -47,7 +55,7 @@ When asked for the domain, enter:
 rust.kavosh.info
 ```
 
-For the RustDesk ID and Relay ports, either accept the high non-default free ports suggested by KavoshRust or enter your own high ports. The manager rejects a selection if any host-published RustDesk port conflicts with an existing listener. WebSocket-derived ports are checked only if WebSocket publishing is enabled.
+For the RustDesk ID and Relay ports, either accept the high non-default free ports suggested by KavoshRust or enter your own ports. Ports below 1024 are allowed but are treated as risky/common and require confirmation. The manager rejects a selection if any host-published RustDesk port conflicts with an existing listener. WebSocket-derived ports are checked only if WebSocket publishing is enabled.
 
 ### RustDesk port relationships
 
@@ -63,9 +71,9 @@ If Relay port is `R`:
 - `R/TCP` — relay
 - `R+2/TCP` — WebSocket relay (not published by default)
 
-The derived ports are an upstream RustDesk behavior and cannot be independently assigned when using the official OSS binaries.
+The derived ports are an upstream RustDesk behavior and cannot be independently assigned when using the official OSS binaries. Because of these derived listeners, `ID_PORT` must be between 2 and 65533, while `RELAY_PORT` may be between 1 and 65533.
 
-## 4. HTTPS / certificate behavior
+## 5. HTTPS / certificate behavior
 
 If host ports 80 and 443 are free, KavoshRust starts its isolated Caddy container. Caddy automatically obtains and renews a public certificate for the selected domain after DNS resolves correctly.
 
@@ -75,7 +83,7 @@ On a shared web server, the preferred long-term approach is to add `rust.kavosh.
 
 The native RustDesk desktop protocol does not use this HTTPS endpoint; the HTTPS endpoint exists for domain validation, health checks and future web integrations.
 
-## 5. Firewall
+## 6. Firewall
 
 KavoshRust only adds rules when UFW or firewalld is already active. It does not enable a firewall or modify the default policy.
 
@@ -92,7 +100,7 @@ Do the same in any provider-side firewall/security group.
 
 Do not expose the WebSocket ports unless a web client is actually needed.
 
-## 6. Validate after installation
+## 7. Validate after installation
 
 Run:
 
@@ -116,7 +124,7 @@ For a deeper report:
 kavoshrust --diagnostics
 ```
 
-## 7. Configure clients
+## 8. Configure clients
 
 Configure both the technician and customer RustDesk clients with the exact values returned by `kavoshrust --info`.
 
@@ -124,10 +132,10 @@ For the customer-side on-demand support model, configure manual approval (`appro
 
 See [CLIENT.md](CLIENT.md) for the full client procedure.
 
-## 8. Back up before future changes
+## 9. Back up before future changes
 
 From the interactive menu use **Backup server** before changing domain, ports or performing major maintenance. Backups include the RustDesk private key; store them as secrets.
 
-## 9. Shared-server rule
+## 10. Shared-server rule
 
 If any requested port belongs to an existing service, do not stop that service merely to install RustDesk. Choose another RustDesk base/relay port instead. For 80/443, reuse the existing reverse proxy outside KavoshRust rather than replacing it.
