@@ -6,6 +6,8 @@ KavoshRust targets Debian and Ubuntu and must be run as root. RustDesk Server OS
 
 ## Shared-server safety
 
+KavoshRust uses Docker bridge networking and explicitly publishes only the required host ports. WebSocket ports are not published by default.
+
 Before starting RustDesk, the installer:
 
 1. installs basic prerequisites,
@@ -18,6 +20,12 @@ Before starting RustDesk, the installer:
 8. only adds firewall rules when UFW/firewalld is already active.
 
 It never stops an unrelated process just to claim its port.
+
+For a read-only inventory before installation:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/bagdeli/KavoshRust/main/install.sh) --preflight
+```
 
 ## DNS
 
@@ -130,3 +138,16 @@ Menu option 16 toggles `ALWAYS_USE_RELAY=Y` if policy requires all remote deskto
 ## Uninstall
 
 Menu option 19 removes only KavoshRust containers first. Data deletion is separately confirmed. Docker and existing firewall rules are intentionally retained because they may be shared with other services.
+
+
+## Kavosh production naming
+
+For the current Kavosh deployment, the intended public name is:
+
+```text
+rust.kavosh.info
+```
+
+The installer does not hard-code it; the domain is requested interactively so the same repository remains reusable on other hosts. Create or update the DNS A record before installation when possible.
+
+If the shared server already owns TCP 80/443 through another reverse proxy, KavoshRust deliberately does not replace or stop it. RustDesk native desktop access remains usable on its selected custom ports; integrate the HTTPS hostname into the existing reverse proxy separately if an HTTPS landing/health endpoint is required.
