@@ -474,6 +474,10 @@ change_domain(){
   generate_caddy_files
   generate_compose
   compose up -d
+  load_env
+  if [[ "${SSL_ENABLED:-0}" == 1 ]]; then
+    compose restart caddy || true
+  fi
   write_client_config
   ok "Domain updated. Ensure DNS points to this server and update all clients."
   show_server_info
