@@ -1,83 +1,52 @@
-# KavoshRust Security Notes
+# Security
 
-## Shared-server safety model
+## Existing services
 
-The installer is intentionally conservative:
+KavoshRust is designed not to stop or replace unrelated services.
 
-- It checks candidate RustDesk host ports before starting containers.
-- It does not stop an unknown process to free a port.
-- It does not modify SSH configuration.
-- It does not enable UFW/firewalld if the firewall is currently inactive.
-- It does not replace an existing service on TCP 80/443.
-- It runs RustDesk in Docker bridge mode and publishes only required ports.
-- WebSocket ports are not published by default.
+On a shared host it:
 
-## Server keys
+- does not change SSH,
+- does not install Docker,
+- does not replace Nginx,
+- does not enable a disabled host firewall,
+- refuses occupied RustDesk ports,
+- validates Nginx before reload.
 
-Runtime key files are stored under:
+## RustDesk identity keys
+
+Keep this private:
 
 ```text
 /opt/kavoshrust/data/id_ed25519
+```
+
+Clients receive only:
+
+```text
 /opt/kavoshrust/data/id_ed25519.pub
 ```
 
-`id_ed25519` is private and must never be shared.
+Backups contain the private key and must be protected.
 
-Only the public key content from `id_ed25519.pub` is entered into clients.
+## WebSocket ports
 
-KavoshRust starts hbbs first, waits for the shared key pair, then starts hbbr with key validation enabled against the same mounted key material.
+Native RustDesk binds `ID+2/TCP` and `Relay+2/TCP`.
 
-## SSH
+RustDesk upstream recommends keeping WebSocket ports closed when the web client is not used. If there is no local firewall, block those ports in the provider/network firewall.
 
-KavoshRust deliberately leaves SSH untouched. On a production host you should separately consider:
+## Process privilege
 
-- SSH public-key authentication
-- limiting direct root login
-- administrative IP allowlisting or a management VPN
-- brute-force protection
-- off-server backups
+RustDesk runs as the dedicated `kavoshrust` system user, not root.
 
-Do these only with a recovery path available; changing SSH/firewall settings on a remote shared server can lock administrators out.
+The systemd units receive `CAP_NET_BIND_SERVICE` only so that explicitly selected ports below 1024 can still work.
 
-## Host firewall
+## TLS
 
-When UFW or firewalld is already active, KavoshRust adds the required RustDesk rules.
+HTTPS is separate from native RustDesk traffic.
 
-When neither is active, it prints the required ports but does not activate a firewall automatically.
+For the Kavosh production server, certificates are obtained with Certbot using the existing Nginx. KavoshRust writes one isolated vhost and validates the whole Nginx configuration before reload.
 
-A cloud/provider firewall is independent of the host firewall and must be configured separately.
+## Credentials
 
-## Default RustDesk ports
-
-KavoshRust intentionally rejects a public host-port layout that uses RustDesk's default range `21115-21119`. The goal is not security by obscurity; it is operational separation and avoidance of collisions with another RustDesk deployment.
-
-Authentication still depends on the RustDesk server key and client access policy.
-
-## Customer approval
-
-For on-demand support, configure controlled/customer clients with manual approval:
-
-```text
-approve-mode=click
-```
-
-Do not enable unattended access globally unless the business workflow requires it.
-
-## HTTPS
-
-HTTPS managed by Caddy protects the informational/health endpoint on the selected hostname. Native RustDesk traffic is not HTTP traffic and does not run through that HTTPS listener.
-
-Caddy is not started if 80/443 are already occupied by another service.
-
-## Public repository hygiene
-
-Never commit:
-
-- server private keys
-- backups
-- passwords
-- access tokens
-- generated runtime `.env`
-- customer-specific credentials
-
-The repository `.gitignore` excludes the common KavoshRust runtime/secret files, but operators must still review commits before pushing.
+Do not place SSH passwords, private keys, API tokens or server private keys in the public GitHub repository.
