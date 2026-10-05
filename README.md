@@ -56,7 +56,7 @@ ID_PORT/UDP
 RELAY_PORT/TCP
 ```
 
-WebSocket ports remain closed in the firewall by default.
+KavoshRust does not add allow-rules for the WebSocket ports by default. If no host firewall is active, block those ports in the provider/network firewall unless you intentionally need the web client.
 
 ## SSL and existing Nginx
 
