@@ -8,6 +8,7 @@ KavoshRust is an installer and maintenance manager for a **self-hosted RustDesk 
 - Ask for the public domain during installation.
 - Use **non-default, user-selected RustDesk ports**.
 - Detect occupied ports before any RustDesk service is started.
+- Warn before installing Docker on a host with IPv4 forwarding enabled, because Docker may modify iptables/FORWARD behavior on routers or VPN gateways.
 - Publish only the RustDesk ports actually needed; WebSocket ports are off by default.
 - Never stop or reconfigure an unrelated service to free a port.
 - Automatically provision HTTPS with Caddy when TCP 80/443 are available.
@@ -17,7 +18,7 @@ KavoshRust is an installer and maintenance manager for a **self-hosted RustDesk 
 
 ## Quick install
 
-Run a read-only preflight first:
+Run a read-only preflight first. This is especially important on routing/VPN servers:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/bagdeli/KavoshRust/main/install.sh) --preflight
@@ -45,7 +46,7 @@ RustDesk Server OSS uses two server processes: `hbbs` (ID/rendezvous) and `hbbr`
 - `hbbr`: `RELAY_PORT/TCP` for relay
 - `hbbr`: `RELAY_PORT+2/TCP` for WebSocket relay
 
-The installer lets you choose `ID_PORT` and `RELAY_PORT`. It always validates the host-published native ports. The two WebSocket-derived ports are additionally checked only when WebSocket publishing is enabled, so an unrelated host service may keep using an otherwise-unused derived WebSocket port. This keeps the deployment compatible with the official RustDesk client instead of relying on fragile external port remapping.
+The installer lets you choose `ID_PORT` and `RELAY_PORT`. Values across the TCP/UDP port range are accepted, including ports below 1024, but privileged/common ports trigger a warning. Because RustDesk derives `ID_PORT-1`, `ID_PORT+2`, and `RELAY_PORT+2`, the effective constraints are `ID_PORT=2..65533` and `RELAY_PORT=1..65533`. It always validates the host-published native ports. The two WebSocket-derived ports are additionally checked only when WebSocket publishing is enabled, so an unrelated host service may keep using an otherwise-unused derived WebSocket port. This keeps the deployment compatible with the official RustDesk client instead of relying on fragile external port remapping.
 
 The installer deliberately suggests high, non-default ports and rejects any public host-port layout that touches RustDesk's default range `21115-21119`. Native desktop clients normally need these public firewall rules:
 
