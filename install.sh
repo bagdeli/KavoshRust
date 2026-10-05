@@ -59,6 +59,12 @@ validate_port_number(){
   [[ "$p" =~ ^[0-9]+$ ]] && (( p >= 1024 && p <= 65533 ))
 }
 
+validate_host(){
+  local h=${1,,}
+  [[ "$h" =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]] ||
+  [[ "$h" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]
+}
+
 port_in_use(){
   local p=$1
   ss -H -lnt "sport = :$p" 2>/dev/null | grep -q . && return 0
@@ -201,31 +207,48 @@ EOF
 
 generate_compose(){
   load_env
-  cat >"$COMPOSE_FILE" <<'YAML'
+  local nat idws relws hbbs_ws="" hbbr_ws=""
+  nat=$((ID_PORT-1))
+  idws=$((ID_PORT+2))
+  relws=$((RELAY_PORT+2))
+
+  if [[ "${WEB_PORTS_ENABLED:-0}" == 1 ]]; then
+    hbbs_ws="      - \"${idws}:${idws}/tcp\""
+    hbbr_ws="      - \"${relws}:${relws}/tcp\""
+  fi
+
+  cat >"$COMPOSE_FILE" <<EOF
 services:
   hbbs:
     image: rustdesk/rustdesk-server:latest
     container_name: kavoshrust-hbbs
-    command: hbbs -p ${ID_PORT} -r ${DOMAIN}:${RELAY_PORT}
+    command: ["hbbs", "-p", "$ID_PORT", "-r", "$DOMAIN:$RELAY_PORT"]
     environment:
-      RUST_LOG: info
-      ALWAYS_USE_RELAY: ${ALWAYS_USE_RELAY}
+      RUST_LOG: "info"
+      ALWAYS_USE_RELAY: "${ALWAYS_USE_RELAY:-N}"
     volumes:
       - ./data:/root
-    network_mode: host
+    ports:
+      - "$nat:$nat/tcp"
+      - "$ID_PORT:$ID_PORT/tcp"
+      - "$ID_PORT:$ID_PORT/udp"
+$hbbs_ws
     restart: unless-stopped
 
   hbbr:
     image: rustdesk/rustdesk-server:latest
     container_name: kavoshrust-hbbr
-    command: hbbr -p ${RELAY_PORT}
+    command: ["hbbr", "-p", "$RELAY_PORT"]
     environment:
-      RUST_LOG: info
+      RUST_LOG: "info"
     volumes:
       - ./data:/root
-    network_mode: host
+    ports:
+      - "$RELAY_PORT:$RELAY_PORT/tcp"
+$hbbr_ws
     restart: unless-stopped
-YAML
+EOF
+
   if [[ "${SSL_ENABLED:-0}" == 1 ]]; then
     cat >>"$COMPOSE_FILE" <<'YAML'
 
@@ -360,7 +383,7 @@ install_server(){
   local domain suggested_id suggested_relay id relay ssl=1 web=0 force_relay=N rc
   read -r -p "Domain for this RustDesk server (example rust.kavosh.info): " domain
   domain=${domain,,}
-  [[ -n "$domain" && "$domain" != *" "* ]] || { fail "A valid domain or public IPv4 is required."; return; }
+  validate_host "$domain" || { fail "Invalid domain or IPv4 format."; return; }
 
   read -r suggested_id suggested_relay < <(find_suggested_ports)
   while true; do
@@ -444,9 +467,16 @@ status_server(){
   compose ps || true
   echo
   local p
-  for p in "$((ID_PORT-1))" "$ID_PORT" "$((ID_PORT+2))" "$RELAY_PORT" "$((RELAY_PORT+2))"; do
-    if port_in_use "$p"; then ok "Port $p is listening"; else fail "Port $p is NOT listening" || true; fi
+  for p in "$((ID_PORT-1))" "$ID_PORT" "$RELAY_PORT"; do
+    if port_in_use "$p"; then ok "Required port $p is listening"; else fail "Required port $p is NOT listening" || true; fi
   done
+  if [[ "${WEB_PORTS_ENABLED:-0}" == 1 ]]; then
+    for p in "$((ID_PORT+2))" "$((RELAY_PORT+2))"; do
+      if port_in_use "$p"; then ok "WebSocket port $p is listening"; else fail "WebSocket port $p is NOT listening" || true; fi
+    done
+  else
+    info "WebSocket host ports are disabled (not published)."
+  fi
   if [[ "${SSL_ENABLED:-0}" == 1 ]]; then
     curl -fsS --max-time 8 "https://$DOMAIN/health" >/dev/null 2>&1 && ok "HTTPS health endpoint works" || warn "HTTPS health endpoint is not ready/reachable"
   fi
@@ -469,7 +499,7 @@ change_domain(){
   local d old=$DOMAIN
   read -r -p "New domain [$old]: " d
   d=${d:-$old}
-  [[ -n "$d" && "$d" != *" "* ]] || { fail "Invalid domain."; return; }
+  validate_host "$d" || { fail "Invalid domain or IPv4 format."; return; }
   sed -i "s|^DOMAIN=.*|DOMAIN=$d|" "$ENV_FILE"
   generate_caddy_files
   generate_compose
@@ -544,7 +574,36 @@ ssl_manager(){
 firewall_manager(){
   is_installed || { warn "Not installed."; return; }
   echo "This only ADDS KavoshRust rules to an already-active UFW/firewalld; it never enables a firewall or changes default policy."
-  confirm "Apply/re-apply safe RustDesk rules?" Y && configure_firewall
+  if confirm "Apply/re-apply safe RustDesk rules?" Y; then
+    configure_firewall
+  fi
+}
+
+toggle_web_ports(){
+  is_installed || { warn "Not installed."; return; }
+  load_env
+  local new idws relws
+  idws=$((ID_PORT+2))
+  relws=$((RELAY_PORT+2))
+  if [[ "${WEB_PORTS_ENABLED:-0}" == 1 ]]; then
+    new=0
+  else
+    if port_in_use "$idws" || port_in_use "$relws"; then
+      fail "Cannot enable WebSocket publishing: port $idws or $relws is already occupied."
+      return
+    fi
+    new=1
+  fi
+  sed -i "s/^WEB_PORTS_ENABLED=.*/WEB_PORTS_ENABLED=$new/" "$ENV_FILE"
+  generate_compose
+  configure_firewall
+  compose up -d
+  if [[ "$new" == 1 ]]; then
+    ok "WebSocket ports enabled: $idws/TCP and $relws/TCP."
+  else
+    ok "WebSocket ports disabled at Docker publishing layer."
+    warn "Any old firewall allow-rules are retained intentionally to avoid deleting rules that may be shared."
+  fi
 }
 
 backup_server(){
@@ -586,6 +645,30 @@ force_relay_toggle(){
   sed -i "s/^ALWAYS_USE_RELAY=.*/ALWAYS_USE_RELAY=$new/" "$ENV_FILE"
   compose up -d --force-recreate hbbs
   ok "ALWAYS_USE_RELAY=$new"
+}
+
+preflight_report(){
+  check_os
+  echo -e "${CYAN}=== KavoshRust safe preflight (no changes) ===${NC}"
+  echo "OS: $(. /etc/os-release && echo "${PRETTY_NAME:-unknown}")"
+  echo "Kernel: $(uname -r)"
+  echo "CPU cores: $(nproc 2>/dev/null || echo unknown)"
+  echo "Memory:"
+  free -h 2>/dev/null || true
+  echo "Disk:"
+  df -h / 2>/dev/null || true
+  echo "Docker: $(docker --version 2>/dev/null || echo not-installed)"
+  echo "Docker Compose: $(docker compose version 2>/dev/null || echo not-installed)"
+  echo "Public IPv4: $(get_public_ip)"
+  echo
+  if command -v ss >/dev/null 2>&1; then
+    scan_ports
+  else
+    warn "'ss' is not installed; port scan unavailable until iproute2 is installed."
+  fi
+  echo
+  if port_in_use 80; then warn "TCP/UDP 80 appears occupied; bundled Caddy must not claim it."; else ok "Port 80 appears free."; fi
+  if port_in_use 443; then warn "TCP/UDP 443 appears occupied; bundled Caddy must not claim it."; else ok "Port 443 appears free."; fi
 }
 
 diagnostics(){
@@ -682,6 +765,8 @@ menu(){
 17) Diagnostics
 18) Update this manager script
 19) Uninstall RustDesk service
+20) Enable/disable WebSocket ports
+21) Safe preflight report
  0) Exit
 MENU
     local choice
@@ -706,6 +791,8 @@ MENU
       17) diagnostics; pause;;
       18) update_manager; pause;;
       19) uninstall_server; pause;;
+      20) toggle_web_ports; pause;;
+      21) preflight_report; pause;;
       0) exit 0;;
       *) warn "Invalid option."; sleep 1;;
     esac
@@ -716,5 +803,16 @@ if [[ "${KAVOSHRUST_LIB_ONLY:-0}" != 1 ]]; then
   require_root
   mkdir -p "$(dirname "$LOG_FILE")"
   touch "$LOG_FILE" 2>/dev/null || true
+  case "${1:-}" in
+    --preflight) preflight_report; exit 0;;
+    --status) status_server; exit 0;;
+    --info) show_server_info; exit 0;;
+    --diagnostics) diagnostics; exit 0;;
+    --help)
+      echo "Usage: kavoshrust [--preflight|--status|--info|--diagnostics]"
+      echo "Without arguments, the interactive manager opens."
+      exit 0
+      ;;
+  esac
   menu
 fi
