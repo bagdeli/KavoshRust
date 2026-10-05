@@ -14,17 +14,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Install ShellCheck
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
+        run: |
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y shellcheck
+          fi
+
       - name: Bash syntax
         run: |
           bash -n install.sh
-          bash -n tests.sh
+          bash -n tests/test.sh
           bash -n tests/smoke.sh
-      - name: ShellCheck
-        run: shellcheck -x install.sh tests.sh tests/smoke.sh
+
+      - name: ShellCheck errors
+        run: shellcheck -S error -x install.sh tests/test.sh tests/smoke.sh
+
       - name: Unit/static tests
-        run: bash tests.sh
+        run: bash tests/test.sh
 
   rustdesk-smoke:
     runs-on: ubuntu-latest
