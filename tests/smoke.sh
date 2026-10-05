@@ -42,9 +42,7 @@ for spec in \
   "42115:tcp" \
   "42116:tcp" \
   "42116:udp" \
-  "42118:tcp" \
-  "43117:tcp" \
-  "43119:tcp"
+  "43117:tcp"
 do
   port=${spec%:*}
   proto=${spec#*:}
@@ -54,6 +52,15 @@ do
     ss -H -lnu "sport = :$port" | grep -q .
   fi
 done
+
+if ss -H -lnt "sport = :42118" | grep -q .; then
+  echo "Unexpected host listener on disabled hbbs WebSocket port" >&2
+  exit 1
+fi
+if ss -H -lnt "sport = :43119" | grep -q .; then
+  echo "Unexpected host listener on disabled hbbr WebSocket port" >&2
+  exit 1
+fi
 
 docker logs kavoshrust-hbbs --tail 100
 docker logs kavoshrust-hbbr --tail 100
