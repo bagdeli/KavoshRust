@@ -5,10 +5,13 @@ PROJECT_NAME="KavoshRust"
 REPO_RAW="${KAVOSHRUST_REPO_RAW:-https://raw.githubusercontent.com/bagdeli/KavoshRust/main/install.sh}"
 INSTALL_DIR="${KAVOSHRUST_INSTALL_DIR:-/opt/kavoshrust}"
 ENV_FILE="$INSTALL_DIR/.env"
-COMPOSE_FILE="$INSTALL_DIR/compose.yml"
-CADDY_FILE="$INSTALL_DIR/Caddyfile"
-WWW_DIR="$INSTALL_DIR/www"
+BIN_DIR="$INSTALL_DIR/bin"
 DATA_DIR="$INSTALL_DIR/data"
+VERSION_FILE="$INSTALL_DIR/version"
+HBBS_UNIT="/etc/systemd/system/kavoshrust-hbbs.service"
+HBBR_UNIT="/etc/systemd/system/kavoshrust-hbbr.service"
+NGINX_SITE="/etc/nginx/conf.d/kavoshrust.conf"
+ACME_WEBROOT="/var/lib/kavoshrust-acme"
 BACKUP_DIR="${KAVOSHRUST_BACKUP_DIR:-/var/backups/kavoshrust}"
 MANAGER_BIN="${KAVOSHRUST_MANAGER_BIN:-/usr/local/sbin/kavoshrust}"
 LOG_FILE="${KAVOSHRUST_LOG_FILE:-/var/log/kavoshrust-manager.log}"
@@ -43,7 +46,7 @@ confirm(){
   [[ "$ans" =~ ^[Yy]$ ]]
 }
 
-is_installed(){ [[ -f "$ENV_FILE" && -f "$COMPOSE_FILE" ]]; }
+is_installed(){ [[ -f "$ENV_FILE" && -x "$BIN_DIR/hbbs" && -x "$BIN_DIR/hbbr" && -f "$HBBS_UNIT" && -f "$HBBR_UNIT" ]]; }
 
 load_env(){
   if [[ -f "$ENV_FILE" ]]; then
@@ -100,7 +103,7 @@ port_allowed_for_change(){
 }
 
 validate_layout(){
-  local id=$1 relay=$2 context=${3:-install} web=${4:-0}
+  local id=$1 relay=$2 context=${3:-install} _web=${4:-0}
   local nat idws relws p
   nat=$((id-1))
   idws=$((id+2))
@@ -113,13 +116,9 @@ validate_layout(){
     return 1
   }
 
-  local ports=("$nat" "$id" "$relay")
-  if [[ "$web" == 1 ]]; then
-    ports+=("$idws" "$relws")
-  fi
-
+  local ports=("$nat" "$id" "$idws" "$relay" "$relws")
   if [[ $(printf '%s\n' "${ports[@]}" | sort -n | uniq | wc -l) -ne ${#ports[@]} ]]; then
-    fail "Selected RustDesk host ports overlap."
+    fail "Selected RustDesk ports overlap."
     return 1
   fi
 
@@ -158,7 +157,7 @@ show_listeners(){
 routing_risk_report(){
   local forwarding="unknown"
   forwarding=$(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo unknown)
-  echo -e "${CYAN}Routing / Docker safety:${NC}"
+  echo -e "${CYAN}Routing safety:${NC}"
   echo "IPv4 forwarding: $forwarding"
   command -v ip >/dev/null 2>&1 && {
     echo "Routes:"
@@ -166,11 +165,7 @@ routing_risk_report(){
     echo "Policy rules:"
     ip rule show 2>/dev/null | head -n 40 || true
   }
-  if [[ "$forwarding" == 1 ]] && ! command -v docker >/dev/null 2>&1; then
-    warn "IPv4 forwarding is enabled and Docker is not installed. Installing Docker may change iptables/FORWARD behavior on routing/VPN hosts."
-    return 2
-  fi
-  return 0
+  info "Native RustDesk mode is used; Docker networking/iptables is not installed or modified."
 }
 
 check_os(){
@@ -187,38 +182,125 @@ install_dependencies(){
   info "Installing prerequisite packages..."
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y
-  apt-get install -y ca-certificates curl jq openssl tar gzip iproute2 coreutils dnsutils
+  apt-get install -y ca-certificates curl jq openssl tar gzip unzip iproute2 coreutils dnsutils
   ok "Prerequisites installed."
 }
 
 install_docker(){
-  if command -v docker >/dev/null 2>&1; then
-    if docker compose version >/dev/null 2>&1; then
-      ok "Docker + Compose already available."
-      systemctl enable --now docker >/dev/null 2>&1 || true
-      return
-    fi
-    warn "Docker exists but Compose plugin is missing; Docker Engine will not be reinstalled."
-    apt-get install -y docker-compose-plugin || true
-    docker compose version >/dev/null 2>&1 || {
-      fail "Docker is installed but 'docker compose' is unavailable. Install Docker Compose plugin manually."
-      return 1
-    }
-    ok "Docker Compose plugin installed without replacing Docker Engine."
-    return
-  fi
-
-  warn "Docker Engine is not installed. Installing Docker can add networking/iptables rules on this host."
-  info "Installing Docker Engine from Docker's official installer..."
-  local tmp
-  tmp=$(mktemp)
-  curl -fsSL https://get.docker.com -o "$tmp"
-  sh "$tmp"
-  rm -f "$tmp"
-  systemctl enable --now docker
-  docker compose version >/dev/null
-  ok "Docker installed."
+  warn "Docker backend is disabled for KavoshRust native mode."
+  return 0
 }
+
+
+rustdesk_asset_arch(){
+  case "$(dpkg --print-architecture 2>/dev/null || uname -m)" in
+    amd64|x86_64) echo "amd64";;
+    arm64|aarch64) echo "arm64v8";;
+    armhf|armv7l) echo "armv7";;
+    i386|i686) echo "i386";;
+    *) fail "Unsupported CPU architecture."; return 1;;
+  esac
+}
+
+latest_rustdesk_release(){
+  curl -fsSL --retry 3 https://api.github.com/repos/rustdesk/rustdesk-server/releases/latest | jq -r '.tag_name'
+}
+
+install_rustdesk_binaries(){
+  local tag arch url tmp unpack hbbs_path hbbr_path
+  tag=$(latest_rustdesk_release)
+  [[ -n "$tag" && "$tag" != null ]] || { fail "Could not determine latest RustDesk Server release."; return 1; }
+  arch=$(rustdesk_asset_arch)
+  url="https://github.com/rustdesk/rustdesk-server/releases/download/$tag/rustdesk-server-linux-$arch.zip"
+  tmp=$(mktemp)
+  unpack=$(mktemp -d)
+  info "Downloading RustDesk Server OSS $tag ($arch)..."
+  curl -fL --retry 3 --connect-timeout 10 "$url" -o "$tmp"
+  unzip -q "$tmp" -d "$unpack"
+  hbbs_path=$(find "$unpack" -type f -name hbbs -print -quit)
+  hbbr_path=$(find "$unpack" -type f -name hbbr -print -quit)
+  [[ -n "$hbbs_path" && -n "$hbbr_path" ]] || {
+    rm -rf "$tmp" "$unpack"
+    fail "Downloaded archive does not contain hbbs/hbbr."
+    return 1
+  }
+  mkdir -p "$BIN_DIR"
+  install -m 0755 "$hbbs_path" "$BIN_DIR/hbbs"
+  install -m 0755 "$hbbr_path" "$BIN_DIR/hbbr"
+  "$BIN_DIR/hbbs" --help >/dev/null
+  "$BIN_DIR/hbbr" --help >/dev/null
+  printf '%s\n' "$tag" >"$VERSION_FILE"
+  rm -rf "$tmp" "$unpack"
+  ok "RustDesk Server OSS $tag installed."
+}
+
+ensure_service_user(){
+  if ! id kavoshrust >/dev/null 2>&1; then
+    useradd --system --home-dir "$DATA_DIR" --shell /usr/sbin/nologin kavoshrust
+  fi
+  mkdir -p "$DATA_DIR"
+  chown -R kavoshrust:kavoshrust "$DATA_DIR"
+  chmod 700 "$DATA_DIR"
+}
+
+generate_systemd_units(){
+  load_env
+  ensure_service_user
+  cat >"$HBBS_UNIT" <<EOF
+[Unit]
+Description=KavoshRust RustDesk ID/Rendezvous Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kavoshrust
+Group=kavoshrust
+WorkingDirectory=$DATA_DIR
+Environment=RUST_LOG=info
+Environment=ALWAYS_USE_RELAY=${ALWAYS_USE_RELAY:-N}
+ExecStart=$BIN_DIR/hbbs -p $ID_PORT -r $DOMAIN:$RELAY_PORT -k _
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  cat >"$HBBR_UNIT" <<EOF
+[Unit]
+Description=KavoshRust RustDesk Relay Server
+After=network-online.target kavoshrust-hbbs.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kavoshrust
+Group=kavoshrust
+WorkingDirectory=$DATA_DIR
+Environment=RUST_LOG=info
+ExecStart=$BIN_DIR/hbbr -p $RELAY_PORT -k _
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+}
+
+rustdesk_services(){
+  systemctl "$@" kavoshrust-hbbs.service kavoshrust-hbbr.service
+}
+
 
 get_public_ip(){
   local ip=""
@@ -233,140 +315,29 @@ resolve_domain_ipv4(){
 }
 
 write_env(){
-  local domain=$1 id=$2 relay=$3 ssl=$4 web=$5 force_relay=$6
+  local domain=$1 id=$2 relay=$3 ssl=$4 web=$5 force_relay=$6 ssl_mode=${7:-none}
   umask 077
   cat >"$ENV_FILE" <<EOF
 DOMAIN=$domain
 ID_PORT=$id
 RELAY_PORT=$relay
 SSL_ENABLED=$ssl
+SSL_MODE=$ssl_mode
 WEB_PORTS_ENABLED=$web
 ALWAYS_USE_RELAY=$force_relay
 EOF
   chmod 600 "$ENV_FILE"
 }
 
-generate_caddy_files(){
-  load_env
-  mkdir -p "$WWW_DIR" "$INSTALL_DIR/caddy_data" "$INSTALL_DIR/caddy_config"
-  cat >"$WWW_DIR/index.html" <<EOF
-<!doctype html><html><head><meta charset="utf-8"><title>KavoshRust</title></head><body><h1>KavoshRust</h1><p>RustDesk server endpoint is online.</p></body></html>
-EOF
-  cat >"$CADDY_FILE" <<EOF
-$DOMAIN {
-    encode zstd gzip
-    root * /srv
-    file_server
-    respond /health "OK" 200
-}
+generate_caddy_files(){ :; }
 EOF
 }
 
-generate_compose(){
-  load_env
-  local nat idws relws hbbs_ws="" hbbr_ws=""
-  nat=$((ID_PORT-1))
-  idws=$((ID_PORT+2))
-  relws=$((RELAY_PORT+2))
+generate_compose(){ generate_systemd_units; }
 
-  if [[ "${WEB_PORTS_ENABLED:-0}" == 1 ]]; then
-    hbbs_ws="      - \"${idws}:${idws}/tcp\""
-    hbbr_ws="      - \"${relws}:${relws}/tcp\""
-  fi
-
-  cat >"$COMPOSE_FILE" <<EOF
-services:
-  hbbs:
-    image: rustdesk/rustdesk-server:latest
-    container_name: kavoshrust-hbbs
-    command: ["hbbs", "-p", "$ID_PORT", "-r", "$DOMAIN:$RELAY_PORT", "-k", "_"]
-    environment:
-      RUST_LOG: "info"
-      ALWAYS_USE_RELAY: "${ALWAYS_USE_RELAY:-N}"
-    volumes:
-      - ./data:/root
-    ports:
-      - "$nat:$nat/tcp"
-      - "$ID_PORT:$ID_PORT/tcp"
-      - "$ID_PORT:$ID_PORT/udp"
-$hbbs_ws
-    restart: unless-stopped
-
-  hbbr:
-    image: rustdesk/rustdesk-server:latest
-    container_name: kavoshrust-hbbr
-    command: ["hbbr", "-p", "$RELAY_PORT", "-k", "_"]
-    environment:
-      RUST_LOG: "info"
-    volumes:
-      - ./data:/root
-    ports:
-      - "$RELAY_PORT:$RELAY_PORT/tcp"
-$hbbr_ws
-    restart: unless-stopped
-EOF
-
-  if [[ "${SSL_ENABLED:-0}" == 1 ]]; then
-    cat >>"$COMPOSE_FILE" <<'YAML'
-
-  caddy:
-    image: caddy:2
-    container_name: kavoshrust-caddy
-    ports:
-      - "80:80/tcp"
-      - "443:443/tcp"
-      - "443:443/udp"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./www:/srv:ro
-      - ./caddy_data:/data
-      - ./caddy_config:/config
-    restart: unless-stopped
-YAML
-  fi
-}
-
-compose(){ (cd "$INSTALL_DIR" && docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"); }
-
-configure_firewall(){
-  load_env
-  local nat=$((ID_PORT-1)) idws=$((ID_PORT+2)) relws=$((RELAY_PORT+2))
-  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
-    info "Active UFW detected; adding only KavoshRust rules."
-    ufw allow "$nat/tcp" comment 'KavoshRust NAT' >/dev/null
-    ufw allow "$ID_PORT/tcp" comment 'KavoshRust ID TCP' >/dev/null
-    ufw allow "$ID_PORT/udp" comment 'KavoshRust ID UDP' >/dev/null
-    ufw allow "$RELAY_PORT/tcp" comment 'KavoshRust Relay' >/dev/null
-    if [[ "${WEB_PORTS_ENABLED:-0}" == 1 ]]; then
-      ufw allow "$idws/tcp" comment 'KavoshRust ID WS' >/dev/null
-      ufw allow "$relws/tcp" comment 'KavoshRust Relay WS' >/dev/null
-    fi
-    if [[ "${SSL_ENABLED:-0}" == 1 ]]; then
-      ufw allow 80/tcp comment 'KavoshRust ACME HTTP' >/dev/null
-      ufw allow 443/tcp comment 'KavoshRust HTTPS' >/dev/null
-      ufw allow 443/udp comment 'KavoshRust HTTP3' >/dev/null || true
-    fi
-    ok "UFW rules applied without changing existing policy."
-  elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-    info "Active firewalld detected; adding only KavoshRust ports."
-    firewall-cmd --permanent --add-port="$nat/tcp" >/dev/null
-    firewall-cmd --permanent --add-port="$ID_PORT/tcp" >/dev/null
-    firewall-cmd --permanent --add-port="$ID_PORT/udp" >/dev/null
-    firewall-cmd --permanent --add-port="$RELAY_PORT/tcp" >/dev/null
-    if [[ "${WEB_PORTS_ENABLED:-0}" == 1 ]]; then
-      firewall-cmd --permanent --add-port="$idws/tcp" >/dev/null
-      firewall-cmd --permanent --add-port="$relws/tcp" >/dev/null
-    fi
-    if [[ "${SSL_ENABLED:-0}" == 1 ]]; then
-      firewall-cmd --permanent --add-service=http >/dev/null
-      firewall-cmd --permanent --add-service=https >/dev/null
-    fi
-    firewall-cmd --reload >/dev/null
-    ok "firewalld rules applied."
-  else
-    warn "No active UFW/firewalld detected. The script will NOT enable or replace your firewall."
-    warn "Allow the printed RustDesk ports in your host/provider firewall."
-  fi
+compose(){
+  fail "Docker Compose backend is not used by KavoshRust native mode."
+  return 1
 }
 
 wait_for_key(){
