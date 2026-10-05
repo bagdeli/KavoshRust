@@ -8,6 +8,7 @@ KavoshRust is an installer and maintenance manager for a **self-hosted RustDesk 
 - Ask for the public domain during installation.
 - Use **non-default, user-selected RustDesk ports**.
 - Detect occupied ports before any RustDesk service is started.
+- Publish only the RustDesk ports actually needed; WebSocket ports are off by default.
 - Never stop or reconfigure an unrelated service to free a port.
 - Automatically provision HTTPS with Caddy when TCP 80/443 are available.
 - Preserve existing firewall policy; only add RustDesk rules when UFW/firewalld is already active.
@@ -16,7 +17,13 @@ KavoshRust is an installer and maintenance manager for a **self-hosted RustDesk 
 
 ## Quick install
 
-Run as root:
+Run a read-only preflight first:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/bagdeli/KavoshRust/main/install.sh) --preflight
+```
+
+Then start the interactive installer as root:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/bagdeli/KavoshRust/main/install.sh)
@@ -47,7 +54,7 @@ The installer deliberately suggests high, non-default ports. Native desktop clie
 - `ID_PORT/UDP`
 - `RELAY_PORT/TCP`
 
-WebSocket ports are not opened by the safe default because the native desktop client does not require them. They remain visible in the server information and can be handled later if a web client is introduced.
+WebSocket ports are not published by the safe default because the native desktop client does not require them. KavoshRust uses Docker bridge networking with explicit port publishing so unused RustDesk listeners stay isolated inside their containers. Menu option 20 can publish the derived WebSocket ports later if a web client is introduced.
 
 Upstream references:
 
@@ -85,6 +92,8 @@ The manager currently provides:
 17. Diagnostics
 18. Update manager script
 19. Uninstall RustDesk service
+20. Enable/disable WebSocket ports
+21. Safe preflight report
 
 ## Files on the server
 
