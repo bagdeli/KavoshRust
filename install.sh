@@ -250,10 +250,14 @@ install_rustdesk_binaries(){
 }
 
 ensure_service_user(){
+  mkdir -p "$DATA_DIR"
+  if [[ "${KAVOSHRUST_TEST_MODE:-0}" == 1 ]]; then
+    chmod 700 "$DATA_DIR"
+    return 0
+  fi
   if ! id kavoshrust >/dev/null 2>&1; then
     useradd --system --home-dir "$DATA_DIR" --shell /usr/sbin/nologin kavoshrust
   fi
-  mkdir -p "$DATA_DIR"
   chown -R kavoshrust:kavoshrust "$DATA_DIR"
   chmod 700 "$DATA_DIR"
 }
@@ -327,7 +331,9 @@ CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 WantedBy=multi-user.target
 EOF
 
-  systemctl daemon-reload
+  if [[ "${KAVOSHRUST_TEST_MODE:-0}" != 1 ]]; then
+    systemctl daemon-reload
+  fi
 }
 
 wait_for_key(){
