@@ -13,11 +13,12 @@ Before starting RustDesk, the installer:
 1. installs basic prerequisites,
 2. lists current listeners,
 3. asks for the public domain,
-4. suggests non-default high ports,
+4. suggests non-default high ports but permits any valid custom base ports,
 5. checks every RustDesk listener implied by the selected ports,
 6. rejects collisions,
 7. checks whether 80/443 are free before starting bundled Caddy,
-8. only adds firewall rules when UFW/firewalld is already active.
+8. only adds firewall rules when UFW/firewalld is already active,
+9. reports routing state and requires confirmation before installing Docker when IPv4 forwarding is enabled.
 
 It never stops an unrelated process just to claim its port.
 
@@ -26,6 +27,10 @@ For a read-only inventory before installation:
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/bagdeli/KavoshRust/main/install.sh) --preflight
 ```
+
+## Router / forwarding hosts
+
+Before installing Docker on a host that already has `net.ipv4.ip_forward=1`, KavoshRust prints routes and policy rules and asks for explicit confirmation. This is intentional: Docker can modify iptables/FORWARD behavior. Cancelling at that point leaves Docker and RustDesk uninstalled.
 
 ## DNS
 
@@ -55,7 +60,7 @@ R/TCP    relay
 R+2/TCP  relay WebSocket
 ```
 
-These relationships are imposed by the RustDesk Server binaries. Therefore KavoshRust lets you choose P and R, then validates every derived port before launch.
+These relationships are imposed by the RustDesk Server binaries. Therefore KavoshRust lets you choose P and R, then validates every derived port before launch. Low/privileged ports are selectable but generate a warning. The derived ranges mean `P` must be `2..65533`, and `R` must be `1..65533`.
 
 Upstream reference:
 https://github.com/rustdesk/rustdesk-server/blob/master/docs/environment-variables.md
