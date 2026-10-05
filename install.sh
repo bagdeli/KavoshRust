@@ -634,22 +634,39 @@ toggle_web_ports(){
 backup_server(){
   is_installed || { warn "Not installed."; return; }
   mkdir -p "$BACKUP_DIR"; chmod 700 "$BACKUP_DIR"
-  local out="$BACKUP_DIR/kavoshrust-$(date '+%Y%m%d-%H%M%S').tar.gz"
-  tar -C /opt -czf "$out" kavoshrust
+  local out parent base
+  out="$BACKUP_DIR/kavoshrust-$(date '+%Y%m%d-%H%M%S').tar.gz"
+  parent=$(dirname "$INSTALL_DIR")
+  base=$(basename "$INSTALL_DIR")
+  tar -C "$parent" -czf "$out" "$base"
   chmod 600 "$out"
   ok "Backup created: $out"
   warn "Backup contains the RustDesk private key; protect this file."
 }
 
 restore_server(){
-  local src
+  local src parent base
   read -r -p "Full path to KavoshRust backup tar.gz: " src
   [[ -f "$src" ]] || { fail "Backup not found."; return; }
+  parent=$(dirname "$INSTALL_DIR")
+  base=$(basename "$INSTALL_DIR")
+  if ! tar -tzf "$src" | grep -q "^$base/\.env$"; then
+    fail "Invalid KavoshRust backup: .env was not found in the expected directory."
+    return
+  fi
+  if ! tar -tzf "$src" | grep -q "^$base/compose\.yml$"; then
+    fail "Invalid KavoshRust backup: compose.yml was not found."
+    return
+  fi
   confirm "Restore will replace current KavoshRust config/data. Continue?" N || return
-  if is_installed; then compose down || true; backup_server; fi
+  if is_installed; then
+    backup_server
+    compose down || true
+  fi
   rm -rf "$INSTALL_DIR"
-  tar -C /opt -xzf "$src"
-  [[ -f "$ENV_FILE" && -f "$COMPOSE_FILE" ]] || { fail "Invalid backup."; return; }
+  mkdir -p "$parent"
+  tar -C "$parent" -xzf "$src"
+  [[ -f "$ENV_FILE" && -f "$COMPOSE_FILE" ]] || { fail "Backup extraction failed validation."; return; }
   compose up -d
   write_client_config
   ok "Restore completed."
