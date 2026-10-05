@@ -250,14 +250,27 @@ install_rustdesk_binaries(){
 }
 
 ensure_service_user(){
-  mkdir -p "$DATA_DIR"
+  mkdir -p "$INSTALL_DIR" "$BIN_DIR" "$DATA_DIR"
+
   if [[ "${KAVOSHRUST_TEST_MODE:-0}" == 1 ]]; then
+    chmod 710 "$INSTALL_DIR"
+    chmod 755 "$BIN_DIR"
     chmod 700 "$DATA_DIR"
     return 0
   fi
+
   if ! id kavoshrust >/dev/null 2>&1; then
     useradd --system --home-dir "$DATA_DIR" --shell /usr/sbin/nologin kavoshrust
   fi
+
+  # The service user must be able to traverse /opt/kavoshrust to reach
+  # WorkingDirectory=/opt/kavoshrust/data, while root-only config files remain private.
+  chown root:kavoshrust "$INSTALL_DIR"
+  chmod 710 "$INSTALL_DIR"
+
+  chown root:root "$BIN_DIR"
+  chmod 755 "$BIN_DIR"
+
   chown -R kavoshrust:kavoshrust "$DATA_DIR"
   chmod 700 "$DATA_DIR"
 }
@@ -366,6 +379,7 @@ stop_services(){
 }
 
 restart_services(){
+  ensure_service_user
   systemctl restart kavoshrust-hbbs.service
   wait_for_key
   systemctl restart kavoshrust-hbbr.service
@@ -671,7 +685,7 @@ install_server(){
   done
 
   mkdir -p "$INSTALL_DIR" "$BIN_DIR" "$DATA_DIR" "$BACKUP_DIR"
-  chmod 700 "$INSTALL_DIR" "$DATA_DIR" "$BACKUP_DIR"
+  chmod 700 "$BACKUP_DIR"
   write_env "$domain" "$id" "$relay" 0 "$web" "$force_relay" none
 
   install_rustdesk_binaries
