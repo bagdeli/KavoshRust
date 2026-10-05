@@ -457,7 +457,7 @@ domain_conflict_in_nginx(){
 }
 
 write_nginx_http_site(){
-  mkdir -p "$ACME_WEBROOT"
+  mkdir -p "$ACME_WEBROOT" "$(dirname "$NGINX_SITE")"
   cat >"$NGINX_SITE" <<EOF
 server {
     listen 80;
