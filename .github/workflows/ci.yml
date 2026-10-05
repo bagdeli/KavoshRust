@@ -1,0 +1,31 @@
+name: KavoshRust CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: |
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y shellcheck
+          fi
+
+      - name: Bash syntax
+        run: bash -n install.sh tests/test.sh
+
+      - name: Static/unit tests
+        run: bash tests/test.sh
+
+      - name: ShellCheck
+        run: shellcheck -S error install.sh tests/test.sh
