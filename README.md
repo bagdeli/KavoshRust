@@ -45,7 +45,7 @@ RustDesk Server OSS uses two server processes: `hbbs` (ID/rendezvous) and `hbbr`
 - `hbbr`: `RELAY_PORT/TCP` for relay
 - `hbbr`: `RELAY_PORT+2/TCP` for WebSocket relay
 
-The installer lets you choose `ID_PORT` and `RELAY_PORT`. It computes the dependent ports, verifies that all five are distinct and free, and rejects a layout that would collide with any currently listening service. This keeps the deployment compatible with the official RustDesk client instead of relying on fragile external port remapping.
+The installer lets you choose `ID_PORT` and `RELAY_PORT`. It always validates the host-published native ports. The two WebSocket-derived ports are additionally checked only when WebSocket publishing is enabled, so an unrelated host service may keep using an otherwise-unused derived WebSocket port. This keeps the deployment compatible with the official RustDesk client instead of relying on fragile external port remapping.
 
 The installer deliberately suggests high, non-default ports. Native desktop clients normally need these public firewall rules:
 
