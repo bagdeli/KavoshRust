@@ -644,10 +644,27 @@ install_manager_command(){
 
 install_server(){
   if is_installed; then
-    warn "KavoshRust is already installed."
-    if confirm "Repair/update the existing installation?" Y; then
+    warn "KavoshRust is already installed or partially installed."
+    if confirm "Repair/update the existing installation and complete pending setup?" Y; then
       install_dependencies
+      ensure_service_user
+      configure_firewall
       update_server
+      write_client_config
+      install_manager_command
+
+      load_env
+      if [[ "${SSL_ENABLED:-0}" != 1 ]]; then
+        local repair_ssl_rc
+        set +e; ssl_precheck "$DOMAIN"; repair_ssl_rc=$?; set -e
+        if [[ "$repair_ssl_rc" == 0 ]]; then
+          info "Completing pending HTTPS setup on the existing Nginx..."
+          configure_nginx_ssl || warn "RustDesk is repaired, but HTTPS setup still needs attention in menu option 7."
+        else
+          warn "RustDesk repair completed; HTTPS was not enabled automatically. Use menu option 7 after DNS/Nginx prerequisites are ready."
+        fi
+      fi
+
       show_server_info
     fi
     return
