@@ -27,13 +27,12 @@ generate_compose
 
 cd "$TMP_DIR"
 docker compose --env-file .env -f compose.yml pull
-docker compose --env-file .env -f compose.yml up -d
 
-for _ in $(seq 1 45); do
-  [[ -s "$DATA_DIR/id_ed25519.pub" ]] && break
-  sleep 1
-done
+# Exercise the same ordered startup path used in production:
+# hbbs creates/loads the shared key before hbbr starts key validation.
+start_stack
 
+[[ -s "$DATA_DIR/id_ed25519" ]]
 [[ -s "$DATA_DIR/id_ed25519.pub" ]]
 docker ps --format '{{.Names}}' | grep -qx 'kavoshrust-hbbs'
 docker ps --format '{{.Names}}' | grep -qx 'kavoshrust-hbbr'
