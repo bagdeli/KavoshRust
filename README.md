@@ -1,139 +1,170 @@
 # KavoshRust
 
-KavoshRust is an installer and maintenance manager for a **self-hosted RustDesk Server OSS** deployment on Debian/Ubuntu. It is designed for shared production servers where existing services must not be interrupted.
+KavoshRust is a safe installer and maintenance manager for **RustDesk Server OSS** on Debian/Ubuntu, designed for shared production servers.
 
-## Main goals
+For the current Kavosh deployment, the intended hostname is `rust.kavosh.info`, but the installer always asks for the final domain interactively.
 
-- Install RustDesk OSS with Docker Compose.
-- Ask for the public domain during installation.
-- Use **non-default, user-selected RustDesk ports**.
-- Detect occupied ports before any RustDesk service is started.
-- Warn before installing Docker on a host with IPv4 forwarding enabled, because Docker may modify iptables/FORWARD behavior on routers or VPN gateways.
-- Publish only the RustDesk ports actually needed; WebSocket ports are off by default.
-- Never stop or reconfigure an unrelated service to free a port.
-- Automatically provision HTTPS with Caddy when TCP 80/443 are available.
-- Preserve existing firewall policy; only add RustDesk rules when UFW/firewalld is already active.
-- Print the exact ID Server, Relay Server and public Key required by RustDesk clients.
-- Provide a menu for routine operations, diagnostics, updates, backup/restore and uninstall.
+## Why native systemd instead of Docker?
 
-## Quick install
+The target Kavosh server already runs Nginx, sing-box, Unbound and other production services. KavoshRust therefore installs the official RustDesk Server binaries directly and manages them with systemd.
 
-Run a read-only preflight first. This is especially important on routing/VPN servers:
+This avoids introducing Docker bridge networking or Docker-managed iptables rules on a shared host.
+
+## Quick start
+
+Read-only preflight:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/bagdeli/KavoshRust/main/install.sh) --preflight
 ```
 
-Then start the interactive installer as root:
+Interactive installation:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/bagdeli/KavoshRust/main/install.sh)
 ```
 
-After the first installation, the same manager is installed as:
+After installation:
 
 ```bash
 kavoshrust
 ```
 
-## Port model
+## Custom ports
 
-RustDesk Server OSS uses two server processes: `hbbs` (ID/rendezvous) and `hbbr` (relay). Upstream RustDesk ties several listeners to the selected base ports:
+You freely choose the main ID and Relay ports. RustDesk itself derives additional listeners:
 
-- `hbbs`: `ID_PORT-1/TCP` for NAT test
-- `hbbs`: `ID_PORT/TCP+UDP` for rendezvous/heartbeat/hole punching
-- `hbbs`: `ID_PORT+2/TCP` for WebSocket
-- `hbbr`: `RELAY_PORT/TCP` for relay
-- `hbbr`: `RELAY_PORT+2/TCP` for WebSocket relay
+- `ID_PORT-1/TCP` — NAT test
+- `ID_PORT/TCP` — rendezvous / connection
+- `ID_PORT/UDP` — registration / heartbeat / hole punching
+- `ID_PORT+2/TCP` — hbbs WebSocket listener
+- `RELAY_PORT/TCP` — relay
+- `RELAY_PORT+2/TCP` — hbbr WebSocket listener
 
-The installer lets you choose `ID_PORT` and `RELAY_PORT`. Values across the TCP/UDP port range are accepted, including ports below 1024, but privileged/common ports trigger a warning. Because RustDesk derives `ID_PORT-1`, `ID_PORT+2`, and `RELAY_PORT+2`, the effective constraints are `ID_PORT=2..65533` and `RELAY_PORT=1..65533`. It always validates the host-published native ports. The two WebSocket-derived ports are additionally checked only when WebSocket publishing is enabled, so an unrelated host service may keep using an otherwise-unused derived WebSocket port. This keeps the deployment compatible with the official RustDesk client instead of relying on fragile external port remapping.
+Because native RustDesk binds the WebSocket listeners even when you do not expose them publicly, KavoshRust requires **all five derived host ports to be free before installation**.
 
-The installer deliberately suggests high, non-default ports and rejects any public host-port layout that touches RustDesk's default range `21115-21119`. Native desktop clients normally need these public firewall rules:
+The installer rejects any layout touching RustDesk's default range `21115-21119`.
 
-- `ID_PORT-1/TCP`
-- `ID_PORT/TCP`
-- `ID_PORT/UDP`
-- `RELAY_PORT/TCP`
+Ports below 1024 are selectable, but KavoshRust warns before using privileged/common ports. The systemd units include only `CAP_NET_BIND_SERVICE` so low ports can work without running RustDesk as root.
 
-WebSocket ports are not published by the safe default because the native desktop client does not require them. KavoshRust uses Docker bridge networking with explicit port publishing so unused RustDesk listeners stay isolated inside their containers. Menu option 20 can publish the derived WebSocket ports later if a web client is introduced.
+For normal desktop clients, only these need to be allowed through the public firewall:
 
-Upstream references:
+```text
+ID_PORT-1/TCP
+ID_PORT/TCP
+ID_PORT/UDP
+RELAY_PORT/TCP
+```
 
-- https://rustdesk.com/docs/en/self-host/rustdesk-server-oss/docker/
-- https://github.com/rustdesk/rustdesk-server/blob/master/docs/environment-variables.md
+WebSocket ports remain closed in the firewall by default.
 
-## Automatic SSL
+## SSL and existing Nginx
 
-RustDesk OSS native desktop traffic does **not** require HTTPS. KavoshRust nevertheless provisions an HTTPS health/landing endpoint for the chosen domain because it is useful for domain validation, monitoring, and future integrations.
+Native RustDesk desktop traffic does not use HTTPS, but KavoshRust can create a health/landing endpoint for the selected hostname.
 
-If ports 80 or 443 are already occupied, KavoshRust **does not stop the existing service**. Bundled Caddy is skipped and the rest of RustDesk installs normally. You can later use menu item `SSL / HTTPS manager` after integrating the domain with your existing reverse proxy or freeing those ports.
+If DNS points to the server and existing Nginx owns TCP 80/443, KavoshRust:
 
-When 80/443 are free, Caddy obtains and renews the public certificate automatically after DNS points to the server.
+1. adds only `/etc/nginx/conf.d/kavoshrust.conf`,
+2. runs `nginx -t`,
+3. reloads Nginx only after validation succeeds,
+4. obtains the certificate with Certbot webroot mode,
+5. validates Nginx again,
+6. enables HTTPS,
+7. installs a Certbot renewal deploy hook that validates and reloads Nginx.
 
-## Menu
+If validation or certificate issuance fails, the KavoshRust Nginx change is rolled back. Existing virtual hosts are not replaced.
 
-The manager currently provides:
+## Security model
 
-1. Install / Repair RustDesk OSS
+- RustDesk runs as the dedicated `kavoshrust` system user.
+- SSH is not changed.
+- Existing services are never stopped to free a port.
+- UFW/firewalld is never enabled automatically.
+- Only KavoshRust's exact firewall rules are added/removed when a host firewall is already active.
+- The private key `id_ed25519` stays on the server.
+- Only `id_ed25519.pub` is given to clients.
+- RustDesk release assets are downloaded from the official GitHub release and SHA-256 verified when the release API provides a digest.
+
+## Manager menu
+
+The interactive manager includes:
+
+1. Install / Repair
 2. Status
-3. Show server + client connection info
-4. Scan/list occupied ports
+3. Server/client connection information
+4. Port scan
 5. Change domain
 6. Change RustDesk ports
 7. SSL / HTTPS manager
-8. Firewall rules manager
-9. Restart services
-10. Start services
-11. Stop services
-12. View logs
-13. Update RustDesk containers
-14. Backup server
-15. Restore backup
-16. Toggle force-relay mode
+8. Firewall manager
+9. Restart
+10. Start
+11. Stop
+12. Logs
+13. Update RustDesk binaries with pre-update backup and rollback
+14. Backup
+15. Restore
+16. Force-relay toggle
 17. Diagnostics
-18. Update manager script
-19. Uninstall RustDesk service
-20. Enable/disable WebSocket ports
-21. Safe preflight report
+18. Self-update manager
+19. Uninstall
+20. WebSocket firewall toggle
+21. Read-only preflight
 
-## Files on the server
+## Files
 
 ```text
 /opt/kavoshrust/
 ├── .env
-├── compose.yml
-├── Caddyfile
+├── bin/
+│   ├── hbbs
+│   └── hbbr
+├── data/
+│   ├── id_ed25519
+│   └── id_ed25519.pub
 ├── client-config.txt
-├── data/               # RustDesk DB and Ed25519 keys
-├── caddy_data/         # TLS certificates (when enabled)
-├── caddy_config/
-└── www/
+├── version
+└── nginx-site.conf     # copy of KavoshRust vhost when SSL is enabled
 
+/etc/systemd/system/kavoshrust-hbbs.service
+/etc/systemd/system/kavoshrust-hbbr.service
+/etc/nginx/conf.d/kavoshrust.conf
 /var/backups/kavoshrust/
-/usr/local/sbin/kavoshrust
 /var/log/kavoshrust-manager.log
 ```
 
-The backup contains the RustDesk private key and must be treated as a secret.
+## Client configuration
+
+Run:
+
+```bash
+kavoshrust --info
+```
+
+Then configure both technician and customer RustDesk clients with the exact displayed:
+
+- ID Server
+- Relay Server
+- Key
+
+Leave API Server empty for OSS.
+
+See [docs/CLIENT.md](docs/CLIENT.md).
 
 ## Documentation
 
-- [Persian guide / راهنمای فارسی](docs/FA.md)
+- [Persian guide](docs/FA.md)
 - [Client setup](docs/CLIENT.md)
 - [Server operations](docs/SERVER.md)
-- [Kavosh shared-server deployment checklist](docs/KAVOSH-DEPLOYMENT.md)
+- [Kavosh deployment checklist](docs/KAVOSH-DEPLOYMENT.md)
 - [Maintenance](docs/MAINTENANCE.md)
 - [Security](docs/SECURITY.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 
-## Security notes
+## Upstream
 
-- Do not publish `id_ed25519` (private key).
-- Only `id_ed25519.pub` is given to clients.
-- The installer will not enable UFW/firewalld or alter the firewall default policy.
-- Provider/cloud firewalls still need the same RustDesk ports opened.
-- For on-demand support, configure the controlled client to require manual approval (`approve-mode=click`).
+- RustDesk Server OSS: https://github.com/rustdesk/rustdesk-server
+- RustDesk install docs: https://rustdesk.com/docs/en/self-host/rustdesk-server-oss/install/
+- Client configuration: https://rustdesk.com/docs/en/self-host/client-configuration/
 
-## License
-
-This repository contains deployment tooling. RustDesk Server itself is a separate upstream project and is licensed under AGPL-3.0. Review RustDesk's upstream license before redistribution or modification.
+RustDesk Server OSS is a separate upstream project licensed under AGPL-3.0.
