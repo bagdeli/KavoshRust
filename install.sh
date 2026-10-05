@@ -117,6 +117,13 @@ validate_layout(){
   fi
 
   for p in "${ports[@]}"; do
+    if (( p >= 21115 && p <= 21119 )); then
+      fail "Port layout touches RustDesk's default range 21115-21119. Choose different ID/Relay ports."
+      return 1
+    fi
+  done
+
+  for p in "${ports[@]}"; do
     if [[ "$context" == change ]]; then
       port_allowed_for_change "$p" || { fail "Port $p is already in use by another service."; return 1; }
     else
@@ -247,7 +254,7 @@ services:
   hbbs:
     image: rustdesk/rustdesk-server:latest
     container_name: kavoshrust-hbbs
-    command: ["hbbs", "-p", "$ID_PORT", "-r", "$DOMAIN:$RELAY_PORT"]
+    command: ["hbbs", "-p", "$ID_PORT", "-r", "$DOMAIN:$RELAY_PORT", "-k", "_"]
     environment:
       RUST_LOG: "info"
       ALWAYS_USE_RELAY: "${ALWAYS_USE_RELAY:-N}"
@@ -263,7 +270,7 @@ $hbbs_ws
   hbbr:
     image: rustdesk/rustdesk-server:latest
     container_name: kavoshrust-hbbr
-    command: ["hbbr", "-p", "$RELAY_PORT"]
+    command: ["hbbr", "-p", "$RELAY_PORT", "-k", "_"]
     environment:
       RUST_LOG: "info"
     volumes:
@@ -346,6 +353,20 @@ wait_for_key(){
   return 1
 }
 
+start_stack(){
+  is_installed || { fail "KavoshRust is not configured."; return 1; }
+  load_env
+  compose up -d hbbs
+  if ! wait_for_key; then
+    fail "hbbs did not generate/load the server public key within 30 seconds."
+    return 1
+  fi
+  compose up -d hbbr
+  if [[ "${SSL_ENABLED:-0}" == 1 ]]; then
+    compose up -d caddy
+  fi
+}
+
 write_client_config(){
   load_env
   local key="(key not generated yet)"
@@ -392,8 +413,7 @@ install_server(){
       generate_caddy_files
       generate_compose
       compose pull
-      compose up -d
-      wait_for_key || true
+      start_stack
       write_client_config
       show_server_info
     fi
@@ -428,11 +448,6 @@ install_server(){
     validate_layout "$id" "$relay" install "$web" && break
   done
 
-  if [[ "$id" == 21116 || "$relay" == 21117 ]]; then
-    warn "Default RustDesk ports selected."
-    confirm "Continue with defaults?" N || return
-  fi
-
   set +e
   ssl_precheck "$domain"; rc=$?
   set -e
@@ -452,8 +467,7 @@ install_server(){
   configure_firewall
   info "Pulling RustDesk Server OSS containers..."
   compose pull
-  compose up -d
-  if wait_for_key; then ok "RustDesk server key generated."; else warn "Key is not visible yet; check logs."; fi
+  if start_stack; then ok "RustDesk server key generated/loaded."; else return 1; fi
   write_client_config
   install_manager_command
   sleep 2
@@ -553,9 +567,9 @@ change_ports(){
   compose stop hbbs hbbr || true
   sed -i "s/^ID_PORT=.*/ID_PORT=$id/" "$ENV_FILE"
   sed -i "s/^RELAY_PORT=.*/RELAY_PORT=$relay/" "$ENV_FILE"
+  generate_compose
   configure_firewall
-  compose up -d hbbs hbbr
-  wait_for_key || true
+  start_stack
   write_client_config
   ok "Ports updated. Update ALL RustDesk clients and provider firewall rules."
   show_server_info
@@ -582,7 +596,7 @@ ssl_manager(){
       generate_caddy_files
       generate_compose
       configure_firewall
-      compose up -d
+      compose up -d caddy
       ok "Caddy enabled; certificate issuance/renewal is automatic."
       ;;
     2)
@@ -622,7 +636,7 @@ toggle_web_ports(){
   sed -i "s/^WEB_PORTS_ENABLED=.*/WEB_PORTS_ENABLED=$new/" "$ENV_FILE"
   generate_compose
   configure_firewall
-  compose up -d
+  start_stack
   if [[ "$new" == 1 ]]; then
     ok "WebSocket ports enabled: $idws/TCP and $relws/TCP."
   else
@@ -675,7 +689,7 @@ restore_server(){
 update_server(){
   is_installed || { warn "Not installed."; return; }
   compose pull
-  compose up -d
+  start_stack
   ok "RustDesk containers updated."
 }
 
@@ -685,6 +699,7 @@ force_relay_toggle(){
   local new
   if [[ "${ALWAYS_USE_RELAY:-N}" == Y ]]; then new=N; else new=Y; fi
   sed -i "s/^ALWAYS_USE_RELAY=.*/ALWAYS_USE_RELAY=$new/" "$ENV_FILE"
+  generate_compose
   compose up -d --force-recreate hbbs
   ok "ALWAYS_USE_RELAY=$new"
 }
@@ -825,7 +840,7 @@ MENU
       7) ssl_manager; pause;;
       8) firewall_manager; pause;;
       9) is_installed && compose restart || warn "Not installed."; pause;;
-      10) is_installed && compose up -d || warn "Not installed."; pause;;
+      10) is_installed && start_stack || warn "Not installed."; pause;;
       11) is_installed && compose stop || warn "Not installed."; pause;;
       12) show_logs; pause;;
       13) update_server; pause;;
