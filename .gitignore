@@ -1,0 +1,15 @@
+# KavoshRust runtime and secrets
+.env
+data/
+caddy_data/
+caddy_config/
+client-config.txt
+*.tar.gz
+*.backup
+id_ed25519
+id_ed25519.pub
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
