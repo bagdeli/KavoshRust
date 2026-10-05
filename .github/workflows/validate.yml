@@ -4,18 +4,32 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  test:
+  static:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
       - name: Bash syntax
         run: |
           bash -n install.sh
           bash -n tests.sh
+          bash -n tests/smoke.sh
+      - name: ShellCheck
+        run: shellcheck -x install.sh tests.sh tests/smoke.sh
       - name: Unit/static tests
         run: bash tests.sh
+
+  rustdesk-smoke:
+    runs-on: ubuntu-latest
+    needs: static
+    steps:
+      - uses: actions/checkout@v4
+      - name: RustDesk custom-port smoke test
+        run: sudo -E bash tests/smoke.sh
