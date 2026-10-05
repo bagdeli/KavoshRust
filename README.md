@@ -47,7 +47,7 @@ RustDesk Server OSS uses two server processes: `hbbs` (ID/rendezvous) and `hbbr`
 
 The installer lets you choose `ID_PORT` and `RELAY_PORT`. It always validates the host-published native ports. The two WebSocket-derived ports are additionally checked only when WebSocket publishing is enabled, so an unrelated host service may keep using an otherwise-unused derived WebSocket port. This keeps the deployment compatible with the official RustDesk client instead of relying on fragile external port remapping.
 
-The installer deliberately suggests high, non-default ports. Native desktop clients normally need these public firewall rules:
+The installer deliberately suggests high, non-default ports and rejects any public host-port layout that touches RustDesk's default range `21115-21119`. Native desktop clients normally need these public firewall rules:
 
 - `ID_PORT-1/TCP`
 - `ID_PORT/TCP`
@@ -115,13 +115,15 @@ The manager currently provides:
 
 The backup contains the RustDesk private key and must be treated as a secret.
 
-## Client setup
+## Documentation
 
-See [docs/CLIENT.md](docs/CLIENT.md) for exact Windows/Linux/macOS client configuration and the click-to-approve support workflow.
-
-## Server operations
-
-See [docs/SERVER.md](docs/SERVER.md) for port planning, DNS, SSL, firewall behavior, backup/restore, diagnostics and safe operation on a shared server.
+- [Persian guide / راهنمای فارسی](docs/FA.md)
+- [Client setup](docs/CLIENT.md)
+- [Server operations](docs/SERVER.md)
+- [Kavosh shared-server deployment checklist](docs/KAVOSH-DEPLOYMENT.md)
+- [Maintenance](docs/MAINTENANCE.md)
+- [Security](docs/SECURITY.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
 
 ## Security notes
 
