@@ -56,6 +56,13 @@ mkdir -p "$KAVOSHRUST_INSTALL_DIR"
 write_env rust.example.com 45116 46117 0 0 N none
 generate_systemd_units
 
+[[ "$(stat -c '%a' "$KAVOSHRUST_INSTALL_DIR")" == "710" ]] ||
+  fail_test "install directory must be traversable by the kavoshrust service group"
+[[ "$(stat -c '%a' "$BIN_DIR")" == "755" ]] ||
+  fail_test "binary directory permissions are incorrect"
+[[ "$(stat -c '%a' "$DATA_DIR")" == "700" ]] ||
+  fail_test "data directory permissions are incorrect"
+
 grep -Fq "ExecStart=$BIN_DIR/hbbs -p 45116 -r rust.example.com:46117 -k _" "$HBBS_UNIT" ||
   fail_test "hbbs systemd command incorrect"
 grep -Fq "ExecStart=$BIN_DIR/hbbr -p 46117 -k _" "$HBBR_UNIT" ||
