@@ -663,12 +663,12 @@ preflight_report(){
   echo
   if command -v ss >/dev/null 2>&1; then
     scan_ports
+    echo
+    if port_in_use 80; then warn "TCP/UDP 80 appears occupied; bundled Caddy must not claim it."; else ok "Port 80 appears free."; fi
+    if port_in_use 443; then warn "TCP/UDP 443 appears occupied; bundled Caddy must not claim it."; else ok "Port 443 appears free."; fi
   else
     warn "'ss' is not installed; port scan unavailable until iproute2 is installed."
   fi
-  echo
-  if port_in_use 80; then warn "TCP/UDP 80 appears occupied; bundled Caddy must not claim it."; else ok "Port 80 appears free."; fi
-  if port_in_use 443; then warn "TCP/UDP 443 appears occupied; bundled Caddy must not claim it."; else ok "Port 443 appears free."; fi
 }
 
 diagnostics(){
