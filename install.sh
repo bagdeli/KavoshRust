@@ -82,7 +82,10 @@ is_common_port(){
 current_rustdesk_ports(){
   if is_installed; then
     load_env
-    printf '%s\n' "$((ID_PORT-1))" "$ID_PORT" "$((ID_PORT+2))" "$RELAY_PORT" "$((RELAY_PORT+2))"
+    printf '%s\n' "$((ID_PORT-1))" "$ID_PORT" "$RELAY_PORT"
+    if [[ "${WEB_PORTS_ENABLED:-0}" == 1 ]]; then
+      printf '%s\n' "$((ID_PORT+2))" "$((RELAY_PORT+2))"
+    fi
   fi
 }
 
@@ -93,16 +96,26 @@ port_allowed_for_change(){
 }
 
 validate_layout(){
-  local id=$1 relay=$2 context=${3:-install}
-  local nat=$((id-1)) idws=$((id+2)) relws=$((relay+2)) p
-  local ports=("$nat" "$id" "$idws" "$relay" "$relws")
+  local id=$1 relay=$2 context=${3:-install} web=${4:-0}
+  local nat idws relws p
+  nat=$((id-1))
+  idws=$((id+2))
+  relws=$((relay+2))
+
   validate_port_number "$id" || { fail "ID port must be between 1024 and 65533."; return 1; }
   validate_port_number "$relay" || { fail "Relay port must be between 1024 and 65533."; return 1; }
   (( nat >= 1024 && idws <= 65535 && relws <= 65535 )) || { fail "Derived ports are outside the valid range."; return 1; }
-  if [[ $(printf '%s\n' "${ports[@]}" | sort -n | uniq | wc -l) -ne 5 ]]; then
-    fail "ID/Relay ports overlap with RustDesk derived ports."
+
+  local ports=("$nat" "$id" "$relay")
+  if [[ "$web" == 1 ]]; then
+    ports+=("$idws" "$relws")
+  fi
+
+  if [[ $(printf '%s\n' "${ports[@]}" | sort -n | uniq | wc -l) -ne ${#ports[@]} ]]; then
+    fail "Selected RustDesk host ports overlap."
     return 1
   fi
+
   for p in "${ports[@]}"; do
     if [[ "$context" == change ]]; then
       port_allowed_for_change "$p" || { fail "Port $p is already in use by another service."; return 1; }
@@ -118,7 +131,7 @@ find_suggested_ports(){
     id=$(shuf -i 30000-50000 -n 1)
     relay=$(shuf -i 30000-50000 -n 1)
     [[ "$id" == 21116 || "$relay" == 21117 ]] && continue
-    if validate_layout "$id" "$relay" install >/dev/null 2>&1; then echo "$id $relay"; return 0; fi
+    if validate_layout "$id" "$relay" install 0 >/dev/null 2>&1; then echo "$id $relay"; return 0; fi
   done
   echo "32116 33117"
 }
@@ -412,7 +425,7 @@ install_server(){
       confirm "Use it anyway?" N || continue
     fi
     echo "RustDesk will bind: NAT TCP=$((id-1)), ID TCP/UDP=$id, ID WS TCP=$((id+2)), Relay TCP=$relay, Relay WS TCP=$((relay+2))."
-    validate_layout "$id" "$relay" install && break
+    validate_layout "$id" "$relay" install "$web" && break
   done
 
   if [[ "$id" == 21116 || "$relay" == 21117 ]]; then
@@ -534,7 +547,7 @@ change_ports(){
     read -r -p "New ID port [$old_id]: " id; id=${id:-$old_id}
     read -r -p "New Relay port [$old_relay]: " relay; relay=${relay:-$old_relay}
     echo "Derived: $((id-1)), $id, $((id+2)), $relay, $((relay+2))"
-    validate_layout "$id" "$relay" change && break
+    validate_layout "$id" "$relay" change "${WEB_PORTS_ENABLED:-0}" && break
   done
   confirm "Apply and restart only RustDesk containers?" N || return
   compose stop hbbs hbbr || true
@@ -662,7 +675,9 @@ force_relay_toggle(){
 preflight_report(){
   check_os
   echo -e "${CYAN}=== KavoshRust safe preflight (no changes) ===${NC}"
-  echo "OS: $(. /etc/os-release && echo "${PRETTY_NAME:-unknown}")"
+  local pretty="unknown"
+  pretty=$(grep '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d= -f2- | tr -d '"' || true)
+  echo "OS: ${pretty:-unknown}"
   echo "Kernel: $(uname -r)"
   echo "CPU cores: $(nproc 2>/dev/null || echo unknown)"
   echo "Memory:"
