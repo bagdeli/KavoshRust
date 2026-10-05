@@ -17,15 +17,22 @@ source "$ROOT/install.sh"
 fail_test(){ echo "FAIL: $*" >&2; exit 1; }
 
 validate_port_number 45116 || fail_test "high port rejected"
-if validate_port_number 80; then fail_test "privileged port accepted"; fi
+validate_port_number 80 || fail_test "privileged port should be selectable"
+validate_port_number 1 || fail_test "lowest port should be selectable"
+validate_port_number 65535 || fail_test "highest port should be selectable"
+if validate_port_number 0; then fail_test "port 0 accepted"; fi
 
 validate_host rust.kavosh.info || fail_test "valid domain rejected"
 if validate_host 'bad_domain'; then fail_test "invalid domain accepted"; fi
 
 is_common_port 22 || fail_test "common SSH port not detected"
+is_common_port 80 || fail_test "privileged HTTP port not detected as risky/common"
 if is_common_port 45116; then fail_test "high test port marked common"; fi
 
 validate_layout 45116 46117 install 0 || fail_test "valid custom native layout rejected"
+if validate_layout 1 46117 install 0 >/dev/null 2>&1; then
+  fail_test "ID port 1 should fail because ID-1 would be invalid"
+fi
 
 if validate_layout 21116 22117 install 0 >/dev/null 2>&1; then
   fail_test "layout touching RustDesk default ports was accepted"
