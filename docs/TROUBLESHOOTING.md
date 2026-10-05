@@ -1,117 +1,73 @@
-# KavoshRust Troubleshooting
+# Troubleshooting
 
-## First command
+## Client cannot register
 
 Run:
 
 ```bash
-kavoshrust --diagnostics
-```
-
-Then check the specific service logs.
-
-## Client does not receive an ID
-
-Verify:
-
-1. `hbbs` is running.
-2. `ID_PORT/TCP` is reachable.
-3. `ID_PORT/UDP` is reachable.
-4. `ID_PORT-1/TCP` is reachable.
-5. Client ID Server includes the custom port.
-6. Client Key exactly matches the server public key.
-7. Host and provider firewalls allow the ports.
-
-Server checks:
-
-```bash
 kavoshrust --status
-docker logs --tail 200 kavoshrust-hbbs
-```
-
-## Client gets an ID but remote control cannot connect
-
-Check the Relay Server value and `RELAY_PORT/TCP`.
-
-Because KavoshRust uses a non-default relay port, configure Relay Server explicitly:
-
-```text
-rust.example.com:CUSTOM_RELAY_PORT
-```
-
-Also inspect:
-
-```bash
-docker logs --tail 200 kavoshrust-hbbr
-```
-
-## Key or secure-handshake errors
-
-Get the current values again:
-
-```bash
 kavoshrust --info
 ```
 
-Copy the public Key exactly into both technician and customer clients, then restart the RustDesk client/service.
+Verify that the client uses the exact ID Server and public Key shown by the server.
 
-Never paste the private `id_ed25519` file into a client.
+Confirm external access to:
 
-## Port conflict during install
+```text
+ID_PORT-1/TCP
+ID_PORT/TCP
+ID_PORT/UDP
+```
 
-KavoshRust will refuse the selected layout and show that a required port is busy.
+## Relay fails
 
-Inspect listeners:
+Verify:
+
+```text
+RELAY_PORT/TCP
+```
+
+is reachable and that the client has the explicit non-default Relay Server value.
+
+## Service fails to start
+
+```bash
+journalctl -u kavoshrust-hbbs -n 100 --no-pager
+journalctl -u kavoshrust-hbbr -n 100 --no-pager
+```
+
+Then check the configured listeners:
 
 ```bash
 ss -tulpen
 ```
 
-or use menu item 4.
+A port conflict must be resolved by choosing another RustDesk port pair; do not stop unrelated production services.
 
-Choose different ID/Relay ports. Do not stop an existing service solely to make the installer proceed unless you independently know that service can be removed.
+## SSL fails
 
-## HTTPS certificate is not issued
-
-Confirm:
-
-- the domain resolves to this server's public IP,
-- inbound TCP 80 and 443 are permitted,
-- 80/443 are not already owned by another reverse proxy,
-- Caddy can reach public ACME endpoints.
-
-Logs:
+First check DNS:
 
 ```bash
-docker logs --tail 200 kavoshrust-caddy
+dig +short rust.kavosh.info
 ```
 
-If a pre-existing Nginx/Apache/Caddy/HAProxy owns 80/443, leave it in place and integrate the hostname there rather than forcing KavoshRust Caddy to replace it.
+It must resolve to the server public IP.
 
-## Web client fails while native clients work
-
-WebSocket host ports are disabled by default.
-
-Use menu item 20 only when a web client is intentionally required, then configure the corresponding reverse-proxy/firewall policy.
-
-## A port change appears ineffective
-
-Run:
+Then validate Nginx:
 
 ```bash
-kavoshrust --info
-kavoshrust --status
+nginx -t
 ```
 
-The current manager regenerates the Compose file whenever RustDesk ports change. If this is an older installation, update the manager first with menu item 18 and apply the port change again.
+Use menu option 7 to retry HTTPS.
 
-## DNS points somewhere else
+KavoshRust uses Certbot webroot mode, so TCP 80 must remain publicly reachable for HTTP-01 validation.
 
-Check:
+## HTTPS works but RustDesk does not
 
-```bash
-getent ahostsv4 your.domain.example
-curl -4 https://api.ipify.org
-```
+HTTPS is not the RustDesk desktop transport. Check the custom RustDesk TCP/UDP ports separately.
 
-The public IPv4 should match the intended A record for automatic Caddy validation.
+## WebSocket warning
+
+If no UFW/firewalld is active, closing WebSocket access in the KavoshRust menu cannot create a local firewall by itself. Block `ID+2/TCP` and `Relay+2/TCP` in the provider/network firewall if they are not needed.
