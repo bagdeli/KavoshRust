@@ -47,7 +47,7 @@ When asked for the domain, enter:
 rust.kavosh.info
 ```
 
-For the RustDesk ID and Relay ports, either accept the high non-default free ports suggested by KavoshRust or enter your own high ports. The manager rejects a selection if any required/derived host port conflicts with an existing listener.
+For the RustDesk ID and Relay ports, either accept the high non-default free ports suggested by KavoshRust or enter your own high ports. The manager rejects a selection if any host-published RustDesk port conflicts with an existing listener. WebSocket-derived ports are checked only if WebSocket publishing is enabled.
 
 ### RustDesk port relationships
 
