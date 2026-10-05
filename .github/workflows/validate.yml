@@ -18,4 +18,4 @@ jobs:
           bash -n install.sh
           bash -n tests.sh
       - name: Unit/static tests
-        run: ./tests.sh
+        run: bash tests.sh
