@@ -147,11 +147,23 @@ install_dependencies(){
 }
 
 install_docker(){
-  if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-    ok "Docker + Compose already available."
-    systemctl enable --now docker >/dev/null 2>&1 || true
+  if command -v docker >/dev/null 2>&1; then
+    if docker compose version >/dev/null 2>&1; then
+      ok "Docker + Compose already available."
+      systemctl enable --now docker >/dev/null 2>&1 || true
+      return
+    fi
+    warn "Docker exists but Compose plugin is missing; Docker Engine will not be reinstalled."
+    apt-get install -y docker-compose-plugin || true
+    docker compose version >/dev/null 2>&1 || {
+      fail "Docker is installed but 'docker compose' is unavailable. Install Docker Compose plugin manually."
+      return 1
+    }
+    ok "Docker Compose plugin installed without replacing Docker Engine."
     return
   fi
+
+  warn "Docker Engine is not installed. Installing Docker can add networking/iptables rules on this host."
   info "Installing Docker Engine from Docker's official installer..."
   local tmp
   tmp=$(mktemp)
