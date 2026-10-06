@@ -1044,6 +1044,31 @@ show_logs(){
   esac
 }
 
+client_registration_monitor(){
+  is_installed || { warn "Not installed."; return; }
+  load_env
+
+  echo -e "${CYAN}=== Live client registration monitor ===${NC}"
+  echo "hbbs ID/registration port: $ID_PORT/UDP"
+  echo "Ask the problematic client to fully restart RustDesk while this capture is running."
+  echo "Press Ctrl+C to stop and return to the menu."
+  echo
+
+  if ! command -v tcpdump >/dev/null 2>&1; then
+    warn "tcpdump is not installed."
+    if confirm "Install tcpdump for live UDP diagnostics?" N; then
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update -y
+      apt-get install -y tcpdump
+    else
+      echo "Install manually later with: apt-get install -y tcpdump"
+      return
+    fi
+  fi
+
+  tcpdump -ni any -vv "udp port $ID_PORT" || true
+}
+
 banner(){
   clear 2>/dev/null || true
   echo -e "${CYAN}====================================================${NC}"
@@ -1083,6 +1108,7 @@ menu(){
 19) Uninstall RustDesk service
 20) Open/close WebSocket firewall ports
 21) Safe preflight report
+22) Live client registration monitor (UDP)
  0) Exit
 MENU
     local choice
@@ -1109,6 +1135,7 @@ MENU
       19) uninstall_server; pause;;
       20) toggle_web_ports; pause;;
       21) preflight_report; pause;;
+      22) client_registration_monitor; pause;;
       0) exit 0;;
       *) warn "Invalid option."; sleep 1;;
     esac
